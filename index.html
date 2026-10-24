@@ -54,36 +54,41 @@ let API_URL = 'https://script.google.com/macros/s/AKfycbzAduHZzHrSZgPsjSGbSmCmG1
 // CONSTANTS
 // ============================================================
 const MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
-const ROLE_LABELS = {admin:'ผู้ดูแลระบบ',teacher:'ครู',eval:'งานวัดและประเมินผล',deputy:'รองผู้อำนวยการงานบริหารวิชาการ'};
+const ROLE_LABELS = {
+  admin: 'ผู้ดูแลระบบ',
+  teacher: 'ครู',
+  eval: 'งานวัดและประเมินผล',
+  deputy: 'รองผู้อำนวยการงานบริหารวิชาการ'
+};
 const STAGE_INFO = {
-  pending_teacher:{step:2,label:'ขั้นตอนที่ 2 - รอครูที่ปรึกษา',color:'amber'},
-  pending_eval:{step:3,label:'ขั้นตอนที่ 3 - รองานวัดและประเมินผล',color:'blue'},
-  pending_deputy:{step:4,label:'ขั้นตอนที่ 4 - รอรองผู้อำนวยการ',color:'purple'},
-  complete:{step:5,label:'เสร็จสิ้น',color:'green'},
-  rejected:{step:0,label:'ไม่อนุมัติ',color:'red'}
+  pending_teacher: { step: 2, label: 'ขั้นตอนที่ 2 - รอครูที่ปรึกษา', color: 'amber' },
+  pending_eval: { step: 3, label: 'ขั้นตอนที่ 3 - รองานวัดและประเมินผล', color: 'blue' },
+  pending_deputy: { step: 4, label: 'ขั้นตอนที่ 4 - รอรองผู้อำนวยการ', color: 'purple' },
+  complete: { step: 5, label: 'เสร็จสิ้น', color: 'green' },
+  rejected: { step: 0, label: 'ไม่อนุมัติ', color: 'red' }
 };
 
 // ============================================================
 // DB LAYER (In-Memory + Google Sheets Sync)
 // ============================================================
 const DB = {
-  data: { users:[], semesters:[], classes:[], requests:[], theme:{primary:'#10b981',secondary:'#fbbf24'} },
+  data: { users: [], semesters: [], classes: [], requests: [], theme: { primary: '#10b981', secondary: '#fbbf24' } },
   loaded: false,
-  get(k,d){ const v=this.data[k]; return v===undefined?d:v; },
-  set(k,v){ this.data[k]=v; },
-  async load(){
+  get(k, d) { const v = this.data[k]; return v === undefined ? d : v; },
+  set(k, v) { this.data[k] = v; },
+  async load() {
     const r = await apiCall('getAll');
     this.data.users = r.users || [];
     this.data.semesters = r.semesters || [];
     this.data.classes = r.classes || [];
     this.data.requests = r.requests || [];
-    this.data.theme = r.theme || {primary:'#10b981',secondary:'#fbbf24'};
+    this.data.theme = r.theme || { primary: '#10b981', secondary: '#fbbf24' };
     this.loaded = true;
   }
 };
 
 // ============================================================
-// HYBRID API CALL (รองรับทั้ง google.script.run และ fetch API)
+// HYBRID API CALL (แก้บั๊กตัวแปร user ไม่ให้ทับข้อมูลที่กำลังส่ง)
 // ============================================================
 async function apiCall(action, params = {}) {
   // 1. ถ้าทำงานใน Google Apps Script Web App โดยตรง
@@ -100,6 +105,7 @@ async function apiCall(action, params = {}) {
       else if (action === 'approveRequest') runner.approveRequest(params.id, params.role, params.approvalData || params, state.user);
       else if (action === 'saveUser') runner.manageUser(params.isEdit ? 'edit' : 'add', params.user);
       else if (action === 'delUser') runner.manageUser('delete', { id: params.id });
+      else if (action === 'resetDefaultUsers') runner.resetDefaultUsers();
       else if (action === 'saveSemester') runner.manageSemester('add', params.sem);
       else if (action === 'setCurrentSem') runner.manageSemester('setCurrent', { id: params.id });
       else if (action === 'delSem') runner.manageSemester('delete', { id: params.id });
@@ -110,12 +116,12 @@ async function apiCall(action, params = {}) {
     });
   }
 
-  // 2. ถ้าทำงานบน GitHub Pages หรือเบราว์เซอร์ภายนอก
+  // 2. ถ้าทำงานบน GitHub Pages หรือเบราว์เซอร์ภายนอก (วาง currentUser ไว้หน้า params เพื่อไม่ให้ทับ params.user)
   if (API_URL && !API_URL.includes('PASTE')) {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, ...params, user: state.user }),
+      body: JSON.stringify({ action, currentUser: state.user, ...params }),
       redirect: 'follow'
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -284,7 +290,7 @@ function renderSidebar() {
           </div>
           <div class="flex-1 min-w-0">
             <div class="text-xs font-semibold text-gray-800 truncate">${esc(state.user.fullName)}</div>
-            <div class="text-[10px] text-gray-500 truncate">${ROLE_LABELS[state.user.role]}</div>
+            <div class="text-[10px] text-gray-500 truncate">${ROLE_LABELS[state.user.role] || state.user.role}</div>
           </div>
         </div>
         <button data-action="logout" class="w-full text-sm text-red-600 hover:bg-red-50 p-2 rounded-lg transition flex items-center gap-2 justify-center">
@@ -331,7 +337,7 @@ function renderMobileDrawer() {
             <div class="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold" style="background:var(--primary)">${esc(state.user.fullName.charAt(0))}</div>
             <div class="flex-1 min-w-0">
               <div class="text-xs font-semibold text-gray-800 truncate">${esc(state.user.fullName)}</div>
-              <div class="text-[10px] text-gray-500 truncate">${ROLE_LABELS[state.user.role]}</div>
+              <div class="text-[10px] text-gray-500 truncate">${ROLE_LABELS[state.user.role] || state.user.role}</div>
             </div>
           </div>
           <button data-action="logout" class="w-full text-sm text-red-600 hover:bg-red-50 p-2 rounded-lg flex items-center gap-2 justify-center"><i class="fa-solid fa-right-from-bracket"></i> ออกจากระบบ</button>
@@ -635,19 +641,22 @@ function renderAdminUsers() {
   const rows = users.map(u => `
     <tr class="hover:bg-gray-50">
       <td class="px-3 py-2 border-b border-gray-100 text-sm font-medium">${esc(u.fullName)}</td>
-      <td class="px-3 py-2 border-b border-gray-100 text-sm text-gray-600">${esc(u.username)}</td>
-      <td class="px-3 py-2 border-b border-gray-100"><span class="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">${ROLE_LABELS[u.role] || u.role}</span></td>
+      <td class="px-3 py-2 border-b border-gray-100 text-sm text-gray-600 font-mono">${esc(u.username)}</td>
+      <td class="px-3 py-2 border-b border-gray-100"><span class="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">${ROLE_LABELS[u.role] || u.role}</span></td>
       <td class="px-3 py-2 border-b border-gray-100 text-xs text-gray-500">${esc(u.position || '-')}</td>
       <td class="px-3 py-2 border-b border-gray-100 text-right whitespace-nowrap">
-        <button data-action="edit-user" data-id="${u.id}" class="w-8 h-8 rounded-lg text-blue-600 hover:bg-blue-50"><i class="fa-solid fa-pen"></i></button>
-        <button data-action="del-user" data-id="${u.id}" class="w-8 h-8 rounded-lg text-red-600 hover:bg-red-50"><i class="fa-solid fa-trash"></i></button>
+        <button data-action="edit-user" data-id="${u.id}" class="w-8 h-8 rounded-lg text-blue-600 hover:bg-blue-50" title="แก้ไข"><i class="fa-solid fa-pen"></i></button>
+        <button data-action="del-user" data-id="${u.id}" class="w-8 h-8 rounded-lg text-red-600 hover:bg-red-50" title="ลบ"><i class="fa-solid fa-trash"></i></button>
       </td>
     </tr>`).join('');
   return `
     <div class="space-y-4">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between flex-wrap gap-2">
         <div class="text-sm text-gray-500">ทั้งหมด ${users.length} รายการ</div>
-        <button data-action="add-user" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium"><i class="fa-solid fa-plus mr-1"></i> เพิ่มผู้ใช้</button>
+        <div class="flex gap-2">
+          <button data-action="reset-default-users" class="px-3 py-2 rounded-lg text-xs font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 flex items-center gap-1.5"><i class="fa-solid fa-rotate-left text-amber-500"></i> รีเซ็ตบัญชีเริ่มต้นครบทุกสิทธิ์</button>
+          <button data-action="add-user" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5"><i class="fa-solid fa-plus"></i> เพิ่มผู้ใช้ใหม่</button>
+        </div>
       </div>
       <div class="card table-wrap">
         <table class="w-full text-sm min-w-[600px]">
@@ -1041,7 +1050,7 @@ function openRequestDetail(reqId) {
         ` : ''}
         ${canSign ? `
           <div class="border-t pt-3 space-y-2">
-            <div class="font-semibold text-sm">การพิจารณาอนุมัติ (${ROLE_LABELS[role]})</div>
+            <div class="font-semibold text-sm">การพิจารณาอนุมัติ (${ROLE_LABELS[role] || role})</div>
             <div class="flex gap-2">
               <label class="flex-1 border-2 rounded-lg p-2 cursor-pointer flex items-center gap-2 text-sm has-[:checked]:border-emerald-500 has-[:checked]:bg-emerald-50"><input type="radio" name="approve" value="approve" checked> เห็นควรอนุญาต</label>
               <label class="flex-1 border-2 rounded-lg p-2 cursor-pointer flex items-center gap-2 text-sm has-[:checked]:border-red-500 has-[:checked]:bg-red-50"><input type="radio" name="approve" value="reject"> ไม่เห็นควรอนุญาต</label>
@@ -1219,6 +1228,38 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  // Reset default users
+  if (action === 'reset-default-users') {
+    Swal.fire({
+      title: 'รีเซ็ตบัญชีผู้ใช้เริ่มต้น?',
+      html: `ระบบจะสร้างและกู้คืนบัญชีผู้ใช้เริ่มต้นครบทั้ง 5 บทบาท:<br>
+      • <b>admin</b> (ผู้ดูแลระบบ)<br>
+      • <b>teacher</b> (ครูสมศรี ที่ปรึกษา ม.1/1)<br>
+      • <b>teacher2</b> (ครูสมชาย ที่ปรึกษา ม.1/2)<br>
+      • <b>eval</b> (หัวหน้างานวัดและประเมินผล)<br>
+      • <b>deputy</b> (รองผู้อำนวยการฝ่ายวิชาการ)`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'ยืนยันรีเซ็ต',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: state.theme.primary
+    }).then(async r => {
+      if (r.isConfirmed) {
+        Swal.fire({ title: 'กำลังรีเซ็ตบัญชีเริ่มต้น...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+        try {
+          await apiCall('resetDefaultUsers');
+          await DB.load();
+          Swal.close();
+          toast('success', 'รีเซ็ตบัญชีผู้ใช้เริ่มต้นเรียบร้อย');
+          renderApp();
+        } catch (e) {
+          Swal.fire('ผิดพลาด', e.message, 'error');
+        }
+      }
+    });
+    return;
+  }
+
   // Admin Semesters
   if (action === 'add-sem') { openSemForm(); return; }
   if (action === 'set-current-sem') {
@@ -1317,22 +1358,37 @@ function openLoginModal() {
 }
 
 // ============================================================
-// USER FORM MODAL
+// USER FORM MODAL (ปรับฟอร์มให้กรอกง่ายและแยกฟิลด์ชัดเจน)
 // ============================================================
 function openUserForm(id) {
   const users = DB.get('users', []);
   const u = id ? users.find(x => x.id === id) : { username: '', password: '', fullName: '', role: 'teacher', position: '' };
   Swal.fire({
-    title: id ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้',
+    title: id ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้ใหม่',
     html: `
-      <div class="text-left space-y-2">
-        <input id="uf_user" placeholder="Username" value="${esc(u.username)}" class="swal2-input">
-        <input id="uf_pass" placeholder="Password" value="${esc(u.password)}" class="swal2-input">
-        <input id="uf_name" placeholder="ชื่อ-นามสกุล" value="${esc(u.fullName)}" class="swal2-input">
-        <select id="uf_role" class="swal2-input">
-          ${Object.entries(ROLE_LABELS).map(([k, v]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${v}</option>`).join('')}
-        </select>
-        <input id="uf_pos" placeholder="ตำแหน่ง (ถ้ามี)" value="${esc(u.position || '')}" class="swal2-input">
+      <div class="text-left space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-gray-700 block mb-1">Username (ใช้ล็อกอินเข้าระบบ)</label>
+          <input id="uf_user" placeholder="เช่น teacher, eval, deputy หรือชื่อภาษาอังกฤษ" value="${esc(u.username)}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary font-mono">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-700 block mb-1">Password</label>
+          <input id="uf_pass" type="text" placeholder="กำหนดรหัสผ่าน" value="${esc(u.password)}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-700 block mb-1">ชื่อ-นามสกุล</label>
+          <input id="uf_name" placeholder="เช่น นายสมศรี ใจดี" value="${esc(u.fullName)}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-700 block mb-1">สิทธิ์การใช้งาน (Role)</label>
+          <select id="uf_role" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+            ${Object.entries(ROLE_LABELS).map(([k, v]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${v} (${k})</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-700 block mb-1">ตำแหน่ง (ถ้ามี)</label>
+          <input id="uf_pos" placeholder="เช่น ครูที่ปรึกษา ม.1/1, เจ้าหน้าที่วัดผล" value="${esc(u.position || '')}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+        </div>
       </div>
     `,
     width: '450px',
@@ -1341,22 +1397,29 @@ function openUserForm(id) {
     preConfirm: () => {
       const data = {
         username: document.getElementById('uf_user').value.trim(),
-        password: document.getElementById('uf_pass').value,
+        password: document.getElementById('uf_pass').value.trim(),
         fullName: document.getElementById('uf_name').value.trim(),
         role: document.getElementById('uf_role').value,
         position: document.getElementById('uf_pos').value.trim()
       };
-      if (!data.username || !data.password || !data.fullName) return Swal.showValidationMessage('กรุณากรอกข้อมูลให้ครบ');
-      if (users.some(x => x.username === data.username && x.id !== id)) return Swal.showValidationMessage('Username ซ้ำ');
+      if (!data.username || !data.password || !data.fullName) return Swal.showValidationMessage('กรุณากรอกข้อมูลให้ครบทุกช่อง');
+      if (users.some(x => x.username.toLowerCase() === data.username.toLowerCase() && x.id !== id)) {
+        return Swal.showValidationMessage('Username นี้มีอยู่ในระบบแล้ว กรุณาใช้ชื่ออื่น');
+      }
       return data;
     }
   }).then(async r => {
     if (r.isConfirmed && r.value) {
+      Swal.fire({ title: 'กำลังบันทึกข้อมูลผู้ใช้...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
       try {
         await apiCall('saveUser', { user: { id: id || uid(), ...r.value }, isEdit: !!id });
         await DB.load();
-        toast('success', id ? 'แก้ไขแล้ว' : 'เพิ่มแล้ว'); renderApp();
-      } catch (e) { Swal.fire('ผิดพลาด', e.message, 'error'); }
+        Swal.close();
+        toast('success', id ? 'แก้ไขข้อมูลผู้ใช้แล้ว' : 'เพิ่มผู้ใช้ใหม่สำเร็จ');
+        renderApp();
+      } catch (e) {
+        Swal.fire('ผิดพลาด', e.message, 'error');
+      }
     }
   });
 }
@@ -1400,7 +1463,7 @@ function openSemForm() {
 // ============================================================
 function openClassForm(id) {
   const classes = DB.get('classes', []);
-  const teachers = DB.get('users', []).filter(u => u.role === 'teacher');
+  const users = DB.get('users', []).filter(u => u.role === 'teacher');
   const c = id ? classes.find(x => x.id === id) : { name: '', advisors: [] };
   Swal.fire({
     title: id ? 'แก้ไขชั้นเรียน' : 'เพิ่มชั้นเรียน',
@@ -1579,7 +1642,6 @@ function bindPageEvents() {
     applyTheme();
   } catch (e) {
     console.error('Boot loading error:', e);
-    // กรณีที่ยังต่อ API ไม่ได้หรือทดสอบในเบราว์เซอร์
     toast('error', 'เชื่อมต่อข้อมูลไม่สำเร็จ: ' + e.message);
   }
   state.loading = false;
