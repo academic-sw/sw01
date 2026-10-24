@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ระบบคำร้องขอเข้าห้องสอบ (สว.01)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+  :root{--primary:#10b981;--primary-dark:#059669;--secondary:#fbbf24;--bg:#f0fdf4;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Sarabun',sans-serif;background:var(--bg);margin:0;color:#1f2937}
+  .btn-primary{background:var(--primary);color:#fff;transition:.2s}
+  .btn-primary:hover{background:var(--primary-dark)}
+  .text-primary{color:var(--primary)}
+  .skeleton{background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:sk 1.5s infinite;border-radius:8px}
+  @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  .sidebar-item{transition:.15s;border-left:3px solid transparent}
+  .sidebar-item:hover{background:#ecfdf5}
+  .sidebar-item.active{background:var(--primary);color:#fff;border-left-color:var(--secondary)}
+  .card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04)}
+  .card-hover:hover{box-shadow:0 10px 25px rgba(0,0,0,.08);transform:translateY(-2px)}
+  #sigCanvas{touch-action:none;background:#fff;border:2px dashed #cbd5e1;border-radius:12px;cursor:crosshair;width:100%;max-width:500px}
+  .modal-backdrop{background:rgba(0,0,0,.5);backdrop-filter:blur(4px)}
+  .fade-in{animation:fadeIn .3s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .mobile-nav{display:none}
+  @media (max-width:1023px){.mobile-nav{display:flex}.sidebar-desktop{display:none}}
+  .swal2-popup{font-family:'Sarabun',sans-serif!important;border-radius:16px!important}
+  .focus-primary:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px rgba(16,185,129,.15)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+
+// ============================================================
+// 🔧 ตั้งค่า API_URL (แก้บรรทัดนี้!)
+// ============================================================
+const API_URL = 'https://script.google.com/macros/s/AKfycbzAduHZzHrSZgPsjSGbSmCmG1FbLDV34cVQCDCz83P_886yBD0xWoVNPRpVP9C5qBCQ/exec';
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+const ROLE_LABELS = {admin:'ผู้ดูแลระบบ',teacher:'ครู',eval:'งานวัดและประเมินผล',deputy:'รองผู้อำนวยการงานบริหารวิชาการ'};
+const STAGE_INFO = {
+  pending_teacher:{step:2,label:'ขั้นตอนที่ 2 - รอครูที่ปรึกษา',color:'amber'},
+  pending_eval:{step:3,label:'ขั้นตอนที่ 3 - รองานวัดและประเมินผล',color:'blue'},
+  pending_deputy:{step:4,label:'ขั้นตอนที่ 4 - รอรองผู้อำนวยการ',color:'purple'},
+  complete:{step:5,label:'เสร็จสิ้น',color:'green'},
+  rejected:{step:0,label:'ไม่อนุมัติ',color:'red'}
+};
+
+// ============================================================
+// DB (in-memory + sync กับ Google Sheet)
+// ============================================================
+const DB = {
+  data: {users:[],semesters:[],classes:[],requests:[],theme:{primary:'#10b981',secondary:'#fbbf24'}},
+  loaded: false,
+  get(k,d){ const v=this.data[k]; return v===undefined?d:v; },
+  set(k,v){ this.data[k]=v; },
+  async load(){
+    const r = await apiCall('getAll');
+    this.data.users = r.users||[];
+    this.data.semesters = r.semesters||[];
+    this.data.classes = r.classes||[];
+    this.data.requests = r.requests||[];
+    this.data.theme = r.theme||{primary:'#10b981',secondary:'#fbbf24'};
+    this.loaded = true;
+  }
+};
+
+// ============================================================
+// API CALL
+// ============================================================
+async function apiCall(action, params={}){
+  if (!API_URL || API_URL.includes('PASTE')) throw new Error('ยังไม่ได้ตั้งค่า API_URL — กรุณาแก้ไขในโค้ด index.html');
+  const res = await fetch(API_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({action, ...params}),
+    redirect:'follow'
+  });
+  if (!res.ok) throw new Error('HTTP '+res.status);
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'API error');
+  return j;
+}
+
+async function uploadSignature(dataUrl, tag='sig'){
+  if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
+  try {
+    const r = await apiCall('uploadFile', {
+      base64: dataUrl, mimeType:'image/png',
+      filename: tag+'_'+Date.now()+'.png'
+    });
+    return r.url || dataUrl;
+  } catch(e){ console.warn('อัปโหลดลายเซ็นไม่สำเร็จ:', e); return dataUrl; }
+}
+
+// ============================================================
+// STATE
+// ============================================================
+let state={
+  user: JSON.parse(localStorage.getItem('sv01_session')||'null'),
+  page:'home',
+  theme: {primary:'#10b981',secondary:'#fbbf24'},
+  sidebarOpen:false,
+  loading:true,
+  filterSem:'', filterClass:'', filterSearch:'',
+  filterPageSize:10, filterPage:1
+};
+
+// ============================================================
+// UTILS
+// ============================================================
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDate=ts=>{ if(!ts)return '-'; const d=new Date(ts); return d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'})+' '+d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}); };
+const toast=(icon,title)=>Swal.fire({icon,title,toast:true,position:'top-end',showConfirmButton:false,timer:2000,timerProgressBar:true});
+
+function shade(hex,pct){
+  const n=parseInt(hex.slice(1),16);const a=[n>>16,(n>>8)&0xff,n&0xff];
+  return '#'+a.map(v=>Math.max(0,Math.min(255,v+Math.round(255*pct/100))).toString(16).padStart(2,'0')).join('');
+}
+function applyTheme(){
+  const r=document.documentElement;
+  r.style.setProperty('--primary',state.theme.primary);
+  r.style.setProperty('--primary-dark',shade(state.theme.primary,-20));
+  r.style.setProperty('--secondary',state.theme.secondary);
+  r.style.setProperty('--bg',shade(state.theme.primary,95));
+}
+
+// ============================================================
+// AUTH
+// ============================================================
+function login(u,p){
+  const users=DB.get('users',[]);
+  const found=users.find(x=>x.username===u&&x.password===p);
+  if(found){ state.user={...found}; localStorage.setItem('sv01_session',JSON.stringify(state.user)); return true; }
+  return false;
+}
+function logout(){ state.user=null; localStorage.removeItem('sv01_session'); state.page='home'; }
+function isLoggedIn(){ return !!state.user; }
+function hasRole(...roles){ return state.user && roles.includes(state.user.role); }
+
+// ============================================================
+// ROUTER
+// ============================================================
+const PROTECTED=['admin-users','admin-semesters','admin-classes','teacher','eval','deputy','settings'];
+function navigate(page){
+  if(PROTECTED.includes(page) && !isLoggedIn()){
+    return Swal.fire({icon:'warning',title:'กรุณาเข้าสู่ระบบ',showCancelButton:true,confirmButtonText:'เข้าสู่ระบบ',cancelButtonText:'ยกเลิก',confirmButtonColor:state.theme.primary})
+      .then(r=>{ if(r.isConfirmed) openLoginModal(); });
+  }
+  state.page=page; state.sidebarOpen=false;
+  renderApp();
+}
+
+// ============================================================
+// MENU
+// ============================================================
+function menuItems(){
+  const items=[{section:'หลัก',items:[
+    {id:'home',label:'หน้าแรก',icon:'fa-house'},
+    {id:'student',label:'ยื่นคำร้อง (สว.01)',icon:'fa-file-pen'}
+  ]}];
+  if(isLoggedIn() && hasRole('admin')){
+    items.push({section:'จัดการระบบ',items:[
+      {id:'admin-users',label:'ผู้ใช้งาน',icon:'fa-users-gear'},
+      {id:'admin-semesters',label:'ภาคเรียน/ปีการศึกษา',icon:'fa-calendar-days'},
+      {id:'admin-classes',label:'ชั้นเรียน & ครูที่ปรึกษา',icon:'fa-school'},
+      {id:'settings',label:'ตั้งค่าธีมสี',icon:'fa-palette'}
+    ]});
+  }
+  if(isLoggedIn() && hasRole('teacher')) items.push({section:'งานอนุมัติ',items:[{id:'teacher',label:'คิวรอครูอนุมัติ',icon:'fa-chalkboard-user'}]});
+  if(isLoggedIn() && hasRole('eval')) items.push({section:'งานอนุมัติ',items:[{id:'eval',label:'คิวงานวัดและประเมินผล',icon:'fa-clipboard-check'}]});
+  if(isLoggedIn() && hasRole('deputy')) items.push({section:'งานอนุมัติ',items:[{id:'deputy',label:'คิวรองผู้อำนวยการ',icon:'fa-user-tie'}]});
+  if(isLoggedIn() && hasRole('admin')){
+    items.push({section:'งานอนุมัติ (ดูทั้งหมด)',items:[
+      {id:'teacher',label:'คิวครู',icon:'fa-chalkboard-user'},
+      {id:'eval',label:'คิวงานวัดและประเมินผล',icon:'fa-clipboard-check'},
+      {id:'deputy',label:'คิวรองผู้อำนวยการ',icon:'fa-user-tie'}
+    ]});
+  }
+  return items;
+}
+
+function renderMenuList(){
+  return menuItems().map(g=>`
+    <div class="mb-3">
+      <div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-3 py-1">${g.section}</div>
+      ${g.items.map(it=>`
+        <a data-action="nav" data-page="${it.id}" class="sidebar-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 cursor-pointer mb-0.5 ${state.page===it.id?'active':''}">
+          <i class="fa-solid ${it.icon} w-4 text-center"></i>
+          <span class="truncate">${it.label}</span>
+        </a>
+      `).join('')}
+    </div>`).join('');
+}
+
+function renderSidebar(){
+  return `
+  <aside class="sidebar-desktop fixed left-0 top-0 bottom-0 w-72 bg-white shadow-xl z-30 flex flex-col">
+    <div class="p-5 border-b border-gray-100 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl flex items-center justify-center text-white shadow-lg" style="background:linear-gradient(135deg,var(--primary),var(--secondary))">
+        <i class="fa-solid fa-file-signature text-lg"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-bold text-gray-800 text-sm truncate">ระบบ สว.01</div>
+        <div class="text-xs text-gray-500 truncate">คำร้องขอเข้าห้องสอบ</div>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto p-3">${renderMenuList()}</div>
+    <div class="p-3 border-t border-gray-100">
+      ${state.user?`
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-gray-50 mb-2">
+          <div class="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold" style="background:var(--primary)">${esc(state.user.fullName.charAt(0))}</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs font-semibold text-gray-800 truncate">${esc(state.user.fullName)}</div>
+            <div class="text-[10px] text-gray-500 truncate">${ROLE_LABELS[state.user.role]}</div>
+          </div>
+        </div>
+        <button data-action="logout" class="w-full text-sm text-red-600 hover:bg-red-50 p-2 rounded-lg flex items-center gap-2 justify-center"><i class="fa-solid fa-right-from-bracket"></i> ออกจากระบบ</button>
+      `:`<button data-action="open-login" class="btn-primary w-full text-sm p-2.5 rounded-lg flex items-center gap-2 justify-center"><i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</button>`}
+    </div>
+  </aside>`;
+}
+
+function renderMobileDrawer(){
+  if(!state.sidebarOpen) return '';
+  return `
+  <div class="fixed inset-0 z-50 lg:hidden">
+    <div class="absolute inset-0 modal-backdrop" data-action="close-sidebar"></div>
+    <aside class="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-2xl flex flex-col fade-in">
+      <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white" style="background:linear-gradient(135deg,var(--primary),var(--secondary))"><i class="fa-solid fa-file-signature text-sm"></i></div>
+          <div class="font-bold text-gray-800 text-sm">ระบบ สว.01</div>
+        </div>
+        <button data-action="close-sidebar" class="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3">${renderMenuList()}</div>
+      <div class="p-3 border-t border-gray-100">
+        ${state.user?`
+          <div class="flex items-center gap-2 p-2 rounded-lg bg-gray-50 mb-2">
+            <div class="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold" style="background:var(--primary)">${esc(state.user.fullName.charAt(0))}</div>
+            <div class="flex-1 min-w-0"><div class="text-xs font-semibold text-gray-800 truncate">${esc(state.user.fullName)}</div><div class="text-[10px] text-gray-500 truncate">${ROLE_LABELS[state.user.role]}</div></div>
+          </div>
+          <button data-action="logout" class="w-full text-sm text-red-600 hover:bg-red-50 p-2 rounded-lg flex items-center gap-2 justify-center"><i class="fa-solid fa-right-from-bracket"></i> ออกจากระบบ</button>
+        `:`<button data-action="open-login" class="btn-primary w-full text-sm p-2.5 rounded-lg flex items-center gap-2 justify-center"><i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</button>`}
+      </div>
+    </aside>
+  </div>`;
+}
+
+function renderTopBar(){
+  return `
+  <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-gray-100 lg:px-6 px-4 py-3 flex items-center gap-3">
+    <button class="lg:hidden w-9 h-9 rounded-lg hover:bg-gray-100 flex items-center justify-center" data-action="open-sidebar"><i class="fa-solid fa-bars text-gray-700"></i></button>
+    <div class="flex-1 min-w-0">
+      <div class="font-bold text-gray-800 truncate">${pageTitle(state.page)}</div>
+      <div class="text-[11px] text-gray-500 truncate hidden sm:block">${pageSubtitle(state.page)}</div>
+    </div>
+    ${!state.user?`<button data-action="open-login" class="hidden sm:flex btn-primary text-xs px-3 py-2 rounded-lg items-center gap-2"><i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</button>`:`<button data-action="logout" class="w-9 h-9 rounded-lg hover:bg-red-50 text-red-500 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></button>`}
+  </header>`;
+}
+
+function pageTitle(p){ return {home:'แดชบอร์ด',student:'ยื่นคำร้อง (สว.01)','admin-users':'จัดการผู้ใช้งาน','admin-semesters':'จัดการภาคเรียน','admin-classes':'จัดการชั้นเรียน',teacher:'คิวรอครูอนุมัติ',eval:'คิวงานวัดและประเมินผล',deputy:'คิวรองผู้อำนวยการ',settings:'ตั้งค่าธีมสี'}[p]||'หน้าแรก'; }
+function pageSubtitle(p){ return {home:'ภาพรวมระบบและสถิติ',student:'นักเรียน/ผู้ปกครอง กรอกคำร้อง',teacher:'ตรวจสอบและลงนาม',eval:'ตรวจสอบและลงนาม',deputy:'ตรวจสอบและลงนามขั้นสุดท้าย'}[p]||''; }
+
+// ============================================================
+// RENDER
+// ============================================================
+function renderApp(){
+  applyTheme();
+  if(state.loading){
+    document.getElementById('app').innerHTML=`
+      ${renderSidebar()}
+      <div class="lg:ml-72 min-h-screen">
+        ${renderTopBar()}
+        <div class="p-4 lg:p-6 space-y-4">
+          <div class="skeleton h-32"></div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">${Array(4).fill('<div class="skeleton h-20"></div>').join('')}</div>
+        </div>
+      </div>`;
+    return;
+  }
+  document.getElementById('app').innerHTML=`
+    ${renderSidebar()}
+    ${renderMobileDrawer()}
+    <div class="lg:ml-72 min-h-screen">
+      ${renderTopBar()}
+      <main class="p-4 lg:p-6 fade-in">${renderPage()}</main>
+      <div class="h-16 lg:hidden"></div>
+    </div>
+    ${renderMobileBottomNav()}
+  `;
+  bindPageEvents();
+}
+
+function renderMobileBottomNav(){
+  const items=[
+    {id:'home',icon:'fa-house',label:'หน้าแรก'},
+    {id:'student',icon:'fa-file-pen',label:'ยื่นคำร้อง'}
+  ];
+  if(hasRole('teacher')) items.push({id:'teacher',icon:'fa-chalkboard-user',label:'คิวครู'});
+  if(hasRole('eval')) items.push({id:'eval',icon:'fa-clipboard-check',label:'คิววัดฯ'});
+  if(hasRole('deputy')) items.push({id:'deputy',icon:'fa-user-tie',label:'คิวรองฯ'});
+  return `
+  <nav class="mobile-nav fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-gray-200 px-2 py-1.5 justify-around">
+    ${items.map(it=>`
+      <button data-action="nav" data-page="${it.id}" class="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-lg ${state.page===it.id?'text-white':'text-gray-500'}" style="${state.page===it.id?'background:var(--primary)':''}">
+        <i class="fa-solid ${it.icon} text-base"></i>
+        <span class="text-[9px] font-medium">${it.label}</span>
+      </button>`).join('')}
+  </nav>`;
+}
+
+function renderPage(){
+  switch(state.page){
+    case 'home': return renderHome();
+    case 'student': return renderStudent();
+    case 'admin-users': return renderAdminUsers();
+    case 'admin-semesters': return renderAdminSemesters();
+    case 'admin-classes': return renderAdminClasses();
+    case 'teacher': return renderApprovalQueue('teacher');
+    case 'eval': return renderApprovalQueue('eval');
+    case 'deputy': return renderApprovalQueue('deputy');
+    case 'settings': return renderSettings();
+    default: return renderHome();
+  }
+}
+
+// ============================================================
+// HOME
+// ============================================================
+function renderHome(){
+  const sems=DB.get('semesters',[]);
+  const current=sems.find(s=>s.current)||sems[0];
+  const requests=DB.get('requests',[]);
+  const semReq=current?requests.filter(r=>r.term==current.term&&r.academicYear==current.year):requests;
+  const complete=semReq.filter(r=>r.status==='complete').length;
+  const pending=semReq.filter(r=>r.status&&r.status.startsWith('pending')).length;
+  const card=(label,val,icon,color)=>`
+    <div class="card card-hover p-4 transition">
+      <div class="w-10 h-10 rounded-xl flex items-center justify-center bg-${color}-100 text-${color}-600 mb-2"><i class="fa-solid ${icon}"></i></div>
+      <div class="text-2xl font-bold text-gray-800">${val}</div>
+      <div class="text-xs text-gray-500 mt-1">${label}</div>
+    </div>`;
+  return `
+    <div class="space-y-5">
+      <div class="card p-5 lg:p-6 relative overflow-hidden" style="background:linear-gradient(135deg,var(--primary),var(--secondary))">
+        <div class="relative z-10 text-white">
+          <div class="text-xs font-medium opacity-90 mb-1"><i class="fa-solid fa-calendar-check mr-1"></i> ภาคเรียนปัจจุบัน</div>
+          <div class="text-2xl sm:text-3xl font-bold">ภาคเรียนที่ ${current?.term||'-'} / ปีการศึกษา ${current?.year||'-'}</div>
+          <div class="text-sm opacity-90 mt-1">ระบบคำร้องขอเข้าห้องสอบ (สว.01)</div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <button data-action="nav" data-page="student" class="bg-white/20 hover:bg-white/30 backdrop-blur px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"><i class="fa-solid fa-file-pen"></i> ยื่นคำร้องใหม่</button>
+          </div>
+        </div>
+        <div class="absolute -right-8 -bottom-8 text-white/10"><i class="fa-solid fa-file-signature" style="font-size:180px"></i></div>
+      </div>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        ${card('คำร้องทั้งหมด',semReq.length,'fa-file-lines','blue')}
+        ${card('รอดำเนินการ',pending,'fa-clock','amber')}
+        ${card('เสร็จสิ้น',complete,'fa-circle-check','green')}
+        ${card('ผู้ใช้งาน',DB.get('users',[]).length,'fa-users','purple')}
+      </div>
+      ${!isLoggedIn()?`
+        <div class="card p-5 flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-lock text-xl"></i></div>
+          <div class="flex-1">
+            <div class="font-semibold text-gray-800">เข้าสู่ระบบเพื่อจัดการ</div>
+            <div class="text-sm text-gray-500">ครู / งานวัดฯ / รองผู้อำนวยการ / ผู้ดูแลระบบ</div>
+          </div>
+          <button data-action="open-login" class="btn-primary px-4 py-2 rounded-lg text-sm"><i class="fa-solid fa-right-to-bracket mr-1"></i> เข้าสู่ระบบ</button>
+        </div>`:''}
+    </div>`;
+}
+
+// ============================================================
+// STUDENT FORM
+// ============================================================
+function renderStudent(){
+  const sems=DB.get('semesters',[]);
+  const current=sems.find(s=>s.current)||sems[0]||{term:1,year:2568};
+  const classes=DB.get('classes',[]);
+  return `
+    <div class="max-w-4xl mx-auto">
+      <div class="card p-5 lg:p-8">
+        <div class="text-center mb-6">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-800">แบบคำร้องขอเข้าห้องสอบ</h1>
+          <p class="text-sm text-gray-500 mt-1">(สว. 01)</p>
+        </div>
+        <form id="studentForm" class="space-y-5">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">วันที่</label>
+              <select name="day" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+                ${Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}
+              </select></div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">เดือน</label>
+              <select name="month" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+                ${MONTHS.map(m=>`<option value="${m}">${m}</option>`).join('')}
+              </select></div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">พุทธศักราช</label>
+              <input name="year" type="text" required value="${current.year+543}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ชื่อจริง</label>
+              <input name="firstName" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">นามสกุล</label>
+              <input name="lastName" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ชั้น</label>
+              <select name="classId" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+                <option value="">-- เลือกชั้น --</option>
+                ${classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+              </select>
+              ${classes.length===0?'<p class="text-[11px] text-amber-600 mt-1">⚠ ยังไม่มีชั้นเรียน</p>':''}</div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ห้องสอบ</label>
+              <input name="room" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ตึก/อาคาร</label>
+              <input name="building" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">เบอร์โทรศัพท์</label>
+              <input name="phone" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary" placeholder="0XXXXXXXXX"></div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ประเภทการสอบ</label>
+              <div class="flex gap-2 pt-1">
+                <label class="flex-1 border border-gray-300 rounded-lg px-3 py-2 cursor-pointer flex items-center gap-2 text-sm"><input type="radio" name="examType" value="กลางภาค" required> กลางภาค</label>
+                <label class="flex-1 border border-gray-300 rounded-lg px-3 py-2 cursor-pointer flex items-center gap-2 text-sm"><input type="radio" name="examType" value="ปลายภาค" required> ปลายภาค</label>
+              </div></div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ภาคเรียนที่</label>
+              <select name="term" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+                <option value="1" ${current.term==1?'selected':''}>1</option>
+                <option value="2" ${current.term==2?'selected':''}>2</option>
+              </select></div>
+            <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ปีการศึกษา</label>
+              <input name="academicYear" required type="number" value="${current.year}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+          </div>
+          <div><label class="text-xs font-semibold text-gray-600 mb-1 block">เนื่องจาก</label>
+            <textarea name="reason" required rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></textarea></div>
+          <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ซึ่งมีรายวิชาที่สอบของวันที่</label>
+            <input name="examDate" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary" placeholder="เช่น 15 มกราคม 2569"></div>
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-sm font-semibold text-gray-700">รายวิชาที่สอบ</label>
+              <button type="button" data-action="add-subject" class="text-xs bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg hover:bg-emerald-100 font-medium"><i class="fa-solid fa-plus"></i> เพิ่มรายวิชา</button>
+            </div>
+            <div class="table-wrap -mx-1">
+              <table class="w-full text-sm border-collapse min-w-[600px]">
+                <thead><tr class="bg-gray-50">
+                  <th class="border border-gray-200 px-2 py-2 text-xs w-16">ลำดับ</th>
+                  <th class="border border-gray-200 px-2 py-2 text-xs">รหัสวิชา</th>
+                  <th class="border border-gray-200 px-2 py-2 text-xs">ชื่อวิชา</th>
+                  <th class="border border-gray-200 px-2 py-2 text-xs">เวลาสอบ</th>
+                  <th class="border border-gray-200 px-2 py-2 text-xs w-10"></th>
+                </tr></thead>
+                <tbody id="subjectRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+            <div class="text-sm font-semibold text-gray-700 mb-2"><i class="fa-solid fa-signature text-primary mr-1"></i> ลงชื่อนักเรียน</div>
+            <div class="text-sm text-gray-600 mb-2">ชื่อ-นามสกุล: <span id="sigNamePreview" class="font-medium">-</span></div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <div id="studentSigPreview" class="w-40 h-20 border border-gray-200 rounded-lg bg-white flex items-center justify-center text-xs text-gray-400">ยังไม่มีลายเซ็น</div>
+              <button type="button" data-action="open-signature" data-target="student" class="btn-primary px-4 py-2 rounded-lg text-sm"><i class="fa-solid fa-pen-nib"></i> เซ็น/อัปโหลด</button>
+            </div>
+            <input type="hidden" name="signature" id="studentSignature" required>
+          </div>
+          <div class="flex gap-2 justify-end pt-2">
+            <button type="button" data-action="reset-form" class="px-4 py-2 rounded-lg border border-gray-300 text-sm hover:bg-gray-50">ล้างฟอร์ม</button>
+            <button type="submit" class="btn-primary px-6 py-2.5 rounded-lg text-sm font-medium"><i class="fa-solid fa-paper-plane mr-1"></i> ส่งคำร้อง</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+}
+
+function renderSubjectRow(idx,data={}){
+  return `<tr>
+    <td class="border border-gray-200 px-1 py-1"><input type="number" name="order_${idx}" value="${data.order||idx+1}" required class="w-full px-2 py-1.5 text-center text-sm border-0 bg-transparent"></td>
+    <td class="border border-gray-200 px-1 py-1"><input name="code_${idx}" value="${esc(data.code||'')}" required class="w-full px-2 py-1.5 text-sm border-0 bg-transparent"></td>
+    <td class="border border-gray-200 px-1 py-1"><input name="name_${idx}" value="${esc(data.name||'')}" required class="w-full px-2 py-1.5 text-sm border-0 bg-transparent"></td>
+    <td class="border border-gray-200 px-1 py-1"><input name="time_${idx}" value="${esc(data.time||'')}" required class="w-full px-2 py-1.5 text-sm border-0 bg-transparent" placeholder="09:00-12:00"></td>
+    <td class="border border-gray-200 px-1 py-1 text-center"><button type="button" data-action="remove-subject" class="w-7 h-7 rounded text-red-500 hover:bg-red-50"><i class="fa-solid fa-xmark"></i></button></td>
+  </tr>`;
+}
+
+// ============================================================
+// ADMIN USERS
+// ============================================================
+function renderAdminUsers(){
+  const users=DB.get('users',[]);
+  const rows=users.map(u=>`
+    <tr class="hover:bg-gray-50">
+      <td class="px-3 py-2 border-b border-gray-100 text-sm font-medium">${esc(u.fullName)}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-sm text-gray-600">${esc(u.username)}</td>
+      <td class="px-3 py-2 border-b border-gray-100"><span class="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">${ROLE_LABELS[u.role]}</span></td>
+      <td class="px-3 py-2 border-b border-gray-100 text-xs text-gray-500">${esc(u.position||'-')}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-right whitespace-nowrap">
+        <button data-action="edit-user" data-id="${u.id}" class="w-8 h-8 rounded-lg text-blue-600 hover:bg-blue-50"><i class="fa-solid fa-pen"></i></button>
+        <button data-action="del-user" data-id="${u.id}" class="w-8 h-8 rounded-lg text-red-600 hover:bg-red-50"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>`).join('');
+  return `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-gray-500">ทั้งหมด ${users.length} รายการ</div>
+        <button data-action="add-user" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium"><i class="fa-solid fa-plus mr-1"></i> เพิ่มผู้ใช้</button>
+      </div>
+      <div class="card table-wrap">
+        <table class="w-full text-sm min-w-[600px]">
+          <thead><tr class="bg-gray-50 text-left text-xs font-semibold text-gray-600">
+            <th class="px-3 py-2.5">ชื่อ-นามสกุล</th><th class="px-3 py-2.5">Username</th>
+            <th class="px-3 py-2.5">สิทธิ์</th><th class="px-3 py-2.5">ตำแหน่ง</th>
+            <th class="px-3 py-2.5 text-right">จัดการ</th></tr></thead>
+          <tbody>${rows||'<tr><td colspan="5" class="p-8 text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// ADMIN SEMESTERS
+// ============================================================
+function renderAdminSemesters(){
+  const sems=DB.get('semesters',[]);
+  const rows=sems.map(s=>{
+    const reqs=DB.get('requests',[]).filter(r=>r.term==s.term&&r.academicYear==s.year);
+    return `<tr class="hover:bg-gray-50">
+      <td class="px-3 py-2 border-b border-gray-100 text-sm">ภาคเรียนที่ ${s.term} / ${s.year}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-sm">${reqs.length} คำร้อง</td>
+      <td class="px-3 py-2 border-b border-gray-100">${s.current?'<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">ปัจจุบัน</span>':'-'}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-right whitespace-nowrap">
+        ${!s.current?`<button data-action="set-current-sem" data-id="${s.id}" class="w-8 h-8 rounded-lg text-emerald-600 hover:bg-emerald-50"><i class="fa-solid fa-check"></i></button>`:''}
+        <button data-action="del-sem" data-id="${s.id}" class="w-8 h-8 rounded-lg text-red-600 hover:bg-red-50"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>`}).join('');
+  return `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-gray-500">ทั้งหมด ${sems.length} ภาคเรียน</div>
+        <button data-action="add-sem" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium"><i class="fa-solid fa-plus mr-1"></i> เพิ่มภาคเรียน</button>
+      </div>
+      <div class="card table-wrap">
+        <table class="w-full text-sm min-w-[500px]">
+          <thead><tr class="bg-gray-50 text-left text-xs font-semibold text-gray-600">
+            <th class="px-3 py-2.5">ภาคเรียน/ปี</th><th class="px-3 py-2.5">จำนวนคำร้อง</th>
+            <th class="px-3 py-2.5">สถานะ</th><th class="px-3 py-2.5 text-right">จัดการ</th></tr></thead>
+          <tbody>${rows||'<tr><td colspan="4" class="p-8 text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// ADMIN CLASSES
+// ============================================================
+function renderAdminClasses(){
+  const classes=DB.get('classes',[]);
+  const users=DB.get('users',[]);
+  const teachers=users.filter(u=>u.role==='teacher');
+  const rows=classes.map(c=>{
+    const advisors=(c.advisors||[]).map(id=>users.find(u=>u.id===id)).filter(Boolean);
+    return `<tr class="hover:bg-gray-50">
+      <td class="px-3 py-2 border-b border-gray-100 text-sm font-medium">${esc(c.name)}</td>
+      <td class="px-3 py-2 border-b border-gray-100">
+        <div class="flex flex-wrap gap-1">${advisors.length?advisors.map(a=>`<span class="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">${esc(a.fullName)}</span>`).join(''):'<span class="text-xs text-gray-400">ยังไม่มี</span>'}</div>
+      </td>
+      <td class="px-3 py-2 border-b border-gray-100 text-right whitespace-nowrap">
+        <button data-action="edit-class" data-id="${c.id}" class="w-8 h-8 rounded-lg text-blue-600 hover:bg-blue-50"><i class="fa-solid fa-pen"></i></button>
+        <button data-action="del-class" data-id="${c.id}" class="w-8 h-8 rounded-lg text-red-600 hover:bg-red-50"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>`}).join('');
+  return `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-gray-500">ทั้งหมด ${classes.length} ชั้นเรียน</div>
+        <button data-action="add-class" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium"><i class="fa-solid fa-plus mr-1"></i> เพิ่มชั้นเรียน</button>
+      </div>
+      <div class="card table-wrap">
+        <table class="w-full text-sm min-w-[500px]">
+          <thead><tr class="bg-gray-50 text-left text-xs font-semibold text-gray-600">
+            <th class="px-3 py-2.5">ชื่อชั้น</th><th class="px-3 py-2.5">ครูที่ปรึกษา</th>
+            <th class="px-3 py-2.5 text-right">จัดการ</th></tr></thead>
+          <tbody>${rows||'<tr><td colspan="3" class="p-8 text-center text-gray-400">ไม่มีข้อมูล</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${teachers.length===0?'<div class="text-xs text-amber-600 bg-amber-50 p-3 rounded-lg"><i class="fa-solid fa-info-circle"></i> ยังไม่มีครู — เพิ่มในเมนู "ผู้ใช้งาน" ก่อน</div>':''}
+    </div>`;
+}
+
+// ============================================================
+// APPROVAL QUEUE
+// ============================================================
+function renderApprovalQueue(role){
+  const roleMap={teacher:'pending_teacher',eval:'pending_eval',deputy:'pending_deputy'};
+  let requests=DB.get('requests',[]);
+  const sems=DB.get('semesters',[]);
+  const classes=DB.get('classes',[]);
+
+  if(role==='teacher' && state.user){
+    const myClassIds=classes.filter(c=>(c.advisors||[]).includes(state.user.id)).map(c=>c.id);
+    requests=requests.filter(r=>myClassIds.includes(r.classId));
+  }
+  requests=requests.filter(r=>r.status===roleMap[role]);
+  if(state.filterSem){ const [t,y]=state.filterSem.split('_'); requests=requests.filter(r=>r.term==t&&r.academicYear==y); }
+  if(state.filterClass) requests=requests.filter(r=>r.classId===state.filterClass);
+  if(state.filterSearch) requests=requests.filter(r=>(r.firstName+r.lastName).includes(state.filterSearch));
+  requests.sort((a,b)=>b.createdAt-a.createdAt);
+
+  const total=requests.length;
+  const pageSize=state.filterPageSize;
+  const totalPages=pageSize==='all'?1:Math.ceil(total/pageSize)||1;
+  const page=Math.min(state.filterPage,totalPages);
+  const start=pageSize==='all'?0:(page-1)*pageSize;
+  const pageItems=pageSize==='all'?requests:requests.slice(start,start+pageSize);
+
+  const rows=pageItems.map(r=>`
+    <tr class="hover:bg-gray-50">
+      <td class="px-3 py-2 border-b border-gray-100 text-xs text-gray-500 whitespace-nowrap">${fmtDate(r.createdAt)}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-sm font-medium">${esc(r.firstName)} ${esc(r.lastName)}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-xs">${esc(r.className)}</td>
+      <td class="px-3 py-2 border-b border-gray-100 text-xs">${esc(r.examType)}</td>
+      <td class="px-3 py-2 border-b border-gray-100"><span class="text-[11px] px-2 py-0.5 rounded-full bg-${STAGE_INFO[r.status]?.color||'gray'}-100 text-${STAGE_INFO[r.status]?.color||'gray'}-700">${STAGE_INFO[r.status]?.label||r.status}</span></td>
+      <td class="px-3 py-2 border-b border-gray-100 text-right">
+        <button data-action="view-request" data-id="${r.id}" class="px-3 py-1.5 rounded-lg text-xs btn-primary"><i class="fa-solid fa-eye mr-1"></i> ดู/อนุมัติ</button>
+      </td>
+    </tr>`).join('');
+
+  const semOpts=sems.map(s=>`<option value="${s.term}_${s.year}" ${state.filterSem===`${s.term}_${s.year}`?'selected':''}>ภ.${s.term}/${s.year}</option>`).join('');
+  const classOpts=classes.map(c=>`<option value="${c.id}" ${state.filterClass===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+
+  return `
+    <div class="space-y-4">
+      <div class="card p-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          <select data-filter="sem" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+            <option value="">ทุกภาคเรียน</option>${semOpts}
+          </select>
+          <select data-filter="class" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+            <option value="">ทุกชั้น</option>${classOpts}
+          </select>
+          <input data-filter="search" placeholder="ค้นหาชื่อ..." value="${esc(state.filterSearch)}" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+          <select data-filter="pageSize" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+            ${[10,25,50,100].map(n=>`<option value="${n}" ${state.filterPageSize==n?'selected':''}>${n} รายการ</option>`).join('')}
+            <option value="all" ${state.filterPageSize==='all'?'selected':''}>ทั้งหมด</option>
+          </select>
+        </div>
+      </div>
+      <div class="card table-wrap">
+        <table class="w-full text-sm min-w-[700px]">
+          <thead><tr class="bg-gray-50 text-left text-xs font-semibold text-gray-600">
+            <th class="px-3 py-2.5">วันที่ส่ง</th><th class="px-3 py-2.5">ชื่อ-นามสกุล</th>
+            <th class="px-3 py-2.5">ชั้น</th><th class="px-3 py-2.5">ประเภท</th>
+            <th class="px-3 py-2.5">สถานะ</th><th class="px-3 py-2.5 text-right">จัดการ</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="6" class="p-8 text-center text-gray-400">ไม่มีรายการ</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${totalPages>1?`<div class="flex items-center justify-between text-sm">
+        <div class="text-gray-500">หน้า ${page}/${totalPages} (${total} รายการ)</div>
+        <div class="flex gap-1">
+          <button data-action="page-prev" class="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50" ${page<=1?'disabled style="opacity:.5"':''}><i class="fa-solid fa-chevron-left"></i></button>
+          <button data-action="page-next" class="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50" ${page>=totalPages?'disabled style="opacity:.5"':''}><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+      </div>`:''}
+    </div>`;
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+function renderSettings(){
+  if(!hasRole('admin')) return '<div class="card p-8 text-center text-gray-500">เฉพาะผู้ดูแลระบบ</div>';
+  return `
+    <div class="max-w-2xl mx-auto card p-6 space-y-5">
+      <div><label class="text-sm font-semibold text-gray-700 mb-2 block">สีหลัก</label>
+        <input type="color" id="colorPrimary" value="${state.theme.primary}" class="w-20 h-12 rounded-lg border border-gray-300 cursor-pointer"></div>
+      <div><label class="text-sm font-semibold text-gray-700 mb-2 block">สีรอง</label>
+        <input type="color" id="colorSecondary" value="${state.theme.secondary}" class="w-20 h-12 rounded-lg border border-gray-300 cursor-pointer"></div>
+      <div class="flex gap-2">
+        <button data-action="save-theme" class="btn-primary px-5 py-2.5 rounded-lg text-sm font-medium"><i class="fa-solid fa-save mr-1"></i> บันทึกธีม</button>
+        <button data-action="reset-theme" class="px-5 py-2.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-50">รีเซ็ต</button>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// SIGNATURE MODULE
+// ============================================================
+let sigTarget=null;
+function openSignatureModal(target){
+  sigTarget=target;
+  Swal.fire({
+    title:'<span style="font-size:1.1rem">ลายเซ็น</span>',
+    html:`
+      <div class="flex gap-2 mb-3 justify-center">
+        <button type="button" id="sigTabDraw" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500 text-white">✍ วาด</button>
+        <button type="button" id="sigTabUpload" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-700">⬆ อัปโหลด</button>
+      </div>
+      <div id="sigDrawPane">
+        <canvas id="sigCanvas" width="460" height="200"></canvas>
+        <div class="flex gap-2 justify-center mt-2"><button type="button" id="sigClear" class="px-3 py-1.5 rounded-lg bg-gray-100 text-xs">ล้าง</button></div>
+      </div>
+      <div id="sigUploadPane" style="display:none">
+        <input type="file" id="sigFile" accept="image/png,image/jpeg" class="text-sm">
+        <p class="text-xs text-gray-500 mt-2">ระบบลบพื้นหลังขาวอัตโนมัติ</p>
+        <div id="sigUploadPreview" class="mt-3 flex justify-center"></div>
+      </div>
+    `,
+    showCancelButton:true, confirmButtonText:'บันทึก', cancelButtonText:'ยกเลิก',
+    confirmButtonColor:state.theme.primary,
+    didOpen:()=>{
+      const canvas=document.getElementById('sigCanvas');
+      const ctx=canvas.getContext('2d');
+      ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#1f2937';
+      let drawing=false,lastX=0,lastY=0;
+      const pos=e=>{const r=canvas.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(canvas.width/r.width),y:(t.clientY-r.top)*(canvas.height/r.height)}};
+      const start=e=>{e.preventDefault();drawing=true;const p=pos(e);lastX=p.x;lastY=p.y;};
+      const move=e=>{if(!drawing)return;e.preventDefault();const p=pos(e);ctx.beginPath();ctx.moveTo(lastX,lastY);ctx.lineTo(p.x,p.y);ctx.stroke();lastX=p.x;lastY=p.y;};
+      const end=()=>{drawing=false};
+      canvas.addEventListener('mousedown',start);canvas.addEventListener('mousemove',move);
+      canvas.addEventListener('mouseup',end);canvas.addEventListener('mouseleave',end);
+      canvas.addEventListener('touchstart',start);canvas.addEventListener('touchmove',move);canvas.addEventListener('touchend',end);
+      document.getElementById('sigClear').onclick=()=>ctx.clearRect(0,0,canvas.width,canvas.height);
+      document.getElementById('sigTabDraw').onclick=()=>{
+        document.getElementById('sigDrawPane').style.display='block';
+        document.getElementById('sigUploadPane').style.display='none';
+        document.getElementById('sigTabDraw').className='px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500 text-white';
+        document.getElementById('sigTabUpload').className='px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-700';
+      };
+      document.getElementById('sigTabUpload').onclick=()=>{
+        document.getElementById('sigDrawPane').style.display='none';
+        document.getElementById('sigUploadPane').style.display='block';
+        document.getElementById('sigTabUpload').className='px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500 text-white';
+        document.getElementById('sigTabDraw').className='px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-700';
+      };
+      document.getElementById('sigFile').onchange=async(e)=>{
+        const file=e.target.files[0];if(!file)return;
+        const reader=new FileReader();
+        reader.onload=ev=>{
+          const img=new Image();
+          img.onload=()=>{
+            const processed=removeWhiteBackground(img);
+            document.getElementById('sigUploadPreview').innerHTML=`<img src="${processed}" style="max-height:120px;max-width:100%">`;
+            document.getElementById('sigUploadPreview').dataset.url=processed;
+          };
+          img.src=ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+    },
+    preConfirm:()=>{
+      const drawPane=document.getElementById('sigDrawPane');
+      if(drawPane.style.display!=='none'){
+        const canvas=document.getElementById('sigCanvas');
+        const data=canvas.toDataURL('image/png');
+        if(data.length<1000)return Swal.showValidationMessage('กรุณาวาดลายเซ็นก่อน');
+        return data;
+      }else{
+        const prev=document.getElementById('sigUploadPreview');
+        if(!prev.dataset.url)return Swal.showValidationMessage('กรุณาอัปโหลดรูป');
+        return prev.dataset.url;
+      }
+    }
+  }).then(r=>{
+    if(r.isConfirmed && r.value){
+      window._lastSig = r.value;
+      if(sigTarget==='student'){
+        document.getElementById('studentSignature').value=r.value;
+        document.getElementById('studentSigPreview').innerHTML=`<img src="${r.value}" style="max-height:70px;max-width:100%">`;
+      } else if(sigTarget==='approver'){
+        const preview=document.getElementById('signPreview');
+        if(preview) preview.innerHTML=`<img src="${r.value}" style="max-height:60px;max-width:100%">`;
+      }
+    }
+  });
+}
+
+function removeWhiteBackground(img){
+  const c=document.createElement('canvas');
+  c.width=img.width;c.height=img.height;
+  const ctx=c.getContext('2d');
+  ctx.drawImage(img,0,0);
+  const data=ctx.getImageData(0,0,c.width,c.height);
+  let minX=c.width,minY=c.height,maxX=0,maxY=0;
+  for(let i=0;i<data.data.length;i+=4){
+    const r=data.data[i],g=data.data[i+1],b=data.data[i+2];
+    if(r>235&&g>235&&b>235){data.data[i+3]=0}
+    else{
+      const px=(i/4)%c.width, py=Math.floor((i/4)/c.width);
+      if(px<minX)minX=px;if(px>maxX)maxX=px;
+      if(py<minY)minY=py;if(py>maxY)maxY=py;
+    }
+  }
+  ctx.putImageData(data,0,0);
+  if(maxX<=minX||maxY<=minY)return c.toDataURL('image/png');
+  const w=maxX-minX+10, h=maxY-minY+10;
+  const out=document.createElement('canvas');
+  out.width=w;out.height=h;
+  out.getContext('2d').drawImage(c,minX-5,minY-5,w,h,0,0,w,h);
+  return out.toDataURL('image/png');
+}
+
+// ============================================================
+// REQUEST DETAIL / APPROVAL
+// ============================================================
+function openRequestDetail(reqId){
+  const req=DB.get('requests',[]).find(r=>r.id===reqId);
+  if(!req)return;
+  const role=state.user?.role;
+  const canAct={teacher:'pending_teacher',eval:'pending_eval',deputy:'pending_deputy'}[role];
+  const canSign=req.status===canAct;
+  window._sigTemp = null;
+
+  const subjects=(req.subjects||[]).map(s=>`<tr><td class="border px-2 py-1 text-center text-xs">${esc(s.order)}</td><td class="border px-2 py-1 text-xs">${esc(s.code)}</td><td class="border px-2 py-1 text-xs">${esc(s.name)}</td><td class="border px-2 py-1 text-xs">${esc(s.time)}</td></tr>`).join('');
+
+  const sigBox=(label,name,url,approval,note)=>`
+    <div class="border rounded-lg p-3 bg-gray-50">
+      <div class="text-xs font-semibold text-gray-700 mb-1">${label}</div>
+      ${url?`<img src="${url}" style="max-height:50px;max-width:120px">`:'<div class="text-xs text-gray-400">— ยังไม่เซ็น —</div>'}
+      ${name?`<div class="text-[11px] text-gray-600 mt-1">(${esc(name)})</div>`:''}
+      ${approval?`<div class="text-[11px] mt-1">${approval==='approve'?'<span class="text-emerald-600">✓ เห็นควรอนุญาต</span>':'<span class="text-red-600">✗ ไม่เห็นควร</span>'}</div>`:''}
+      ${note?`<div class="text-[11px] text-gray-600">หมายเหตุ: ${esc(note)}</div>`:''}
+    </div>`;
+
+  Swal.fire({
+    title:'<span style="font-size:1.1rem">รายละเอียดคำร้อง สว.01</span>',
+    width:'min(720px,95vw)',
+    html:`
+      <div class="text-left text-sm space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div><b>ชื่อ:</b> ${esc(req.firstName)} ${esc(req.lastName)}</div>
+          <div><b>ชั้น:</b> ${esc(req.className)}</div>
+          <div><b>ห้องสอบ:</b> ${esc(req.room)}</div>
+          <div><b>ตึก:</b> ${esc(req.building)}</div>
+          <div><b>โทร:</b> ${esc(req.phone)}</div>
+          <div><b>ประเภท:</b> ${esc(req.examType)}</div>
+          <div><b>ภ./ปี:</b> ${esc(req.term)}/${esc(req.academicYear)}</div>
+          <div><b>วันที่:</b> ${fmtDate(req.createdAt)}</div>
+          <div class="col-span-2"><b>สอบวันที่:</b> ${esc(req.examDate)}</div>
+          <div class="col-span-2"><b>เนื่องจาก:</b> ${esc(req.reason)}</div>
+        </div>
+        <table class="w-full border-collapse"><thead><tr class="bg-gray-100">
+          <th class="border px-2 py-1 text-xs w-12">ลำดับ</th>
+          <th class="border px-2 py-1 text-xs">รหัส</th>
+          <th class="border px-2 py-1 text-xs">ชื่อวิชา</th>
+          <th class="border px-2 py-1 text-xs">เวลา</th>
+        </tr></thead><tbody>${subjects}</tbody></table>
+        <div class="grid grid-cols-2 gap-2">
+          ${sigBox('นักเรียน',req.firstName+' '+req.lastName,req.signatures?.student)}
+          ${sigBox('ครูที่ปรึกษา',req.teacherName,req.signatures?.teacher,req.teacherApproval,req.teacherNote)}
+          ${sigBox('งานวัดและประเมินผล',req.evalName,req.signatures?.eval,req.evalApproval,req.evalNote)}
+          ${sigBox('รองผู้อำนวยการ',req.deputyName,req.signatures?.deputy,req.deputyApproval,req.deputyNote)}
+        </div>
+        ${req.status==='complete'?`
+          <button onclick="downloadPDF('${req.id}')" class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium"><i class="fa-solid fa-file-pdf mr-1"></i> ดาวน์โหลด PDF</button>`:''}
+        ${canSign?`
+          <div class="border-t pt-3 space-y-2">
+            <div class="font-semibold text-sm">อนุมัติ</div>
+            <div class="flex gap-2">
+              <label class="flex-1 border-2 rounded-lg p-2 cursor-pointer flex items-center gap-2 text-sm"><input type="radio" name="approve" value="approve" checked> เห็นควรอนุญาต</label>
+              <label class="flex-1 border-2 rounded-lg p-2 cursor-pointer flex items-center gap-2 text-sm"><input type="radio" name="approve" value="reject"> ไม่เห็นควร</label>
+            </div>
+            <textarea id="approveNote" placeholder="หมายเหตุ" class="w-full border rounded-lg px-3 py-2 text-sm"></textarea>
+            <div class="flex items-center gap-2">
+              <div id="signPreview" class="w-32 h-16 border rounded bg-white flex items-center justify-center text-xs text-gray-400">ยังไม่มี</div>
+              <button type="button" onclick="openSignatureModal('approver')" class="btn-primary px-3 py-2 rounded-lg text-xs"><i class="fa-solid fa-pen-nib mr-1"></i> เซ็น</button>
+            </div>
+          </div>`:''}
+      </div>
+    `,
+    showCancelButton:canSign, showConfirmButton:canSign,
+    confirmButtonText:'บันทึก', cancelButtonText:'ปิด',
+    confirmButtonColor:state.theme.primary,
+    preConfirm:()=>{
+      if(!canSign)return;
+      if(!window._sigTemp)return Swal.showValidationMessage('กรุณาเซ็นลายเซ็นก่อน');
+      const approve=document.querySelector('input[name="approve"]:checked').value;
+      const note=document.getElementById('approveNote').value;
+      return{approve,note,sig:window._sigTemp};
+    }
+  }).then(r=>{
+    if(r.isConfirmed && r.value) applyApproval(reqId,role,r.value);
+  });
+}
+
+async function applyApproval(reqId, role, {approve, note, sig}){
+  Swal.fire({title:'กำลังบันทึก...',didOpen:()=>Swal.showLoading(),allowOutsideClick:false});
+  try {
+    const requests=DB.get('requests',[]);
+    const req=requests.find(r=>r.id===reqId);
+    if(!req) throw new Error('ไม่พบคำร้อง');
+
+    const sigUrl = await uploadSignature(sig, role+'_'+reqId);
+    const me = state.user;
+
+    if(role==='teacher'){
+      req.teacherApproval=approve; req.teacherNote=note; req.teacherName=me.fullName;
+      req.signatures.teacher=sigUrl;
+      req.status = approve==='approve' ? 'pending_eval' : 'rejected';
+    } else if(role==='eval'){
+      req.evalApproval=approve; req.evalNote=note; req.evalName=me.fullName;
+      req.signatures.eval=sigUrl;
+      req.status = approve==='approve' ? 'pending_deputy' : 'rejected';
+    } else if(role==='deputy'){
+      req.deputyApproval=approve; req.deputyNote=note; req.deputyName=me.fullName;
+      req.signatures.deputy=sigUrl;
+      req.status = approve==='approve' ? 'complete' : 'rejected';
+    }
+
+    await apiCall('updateRequest', {request:req});
+    await DB.load();
+    toast('success','บันทึกเรียบร้อย');
+    renderApp();
+  } catch(err){
+    Swal.fire('ผิดพลาด', err.message, 'error');
+  }
+}
+
+// ============================================================
+// PDF
+// ============================================================
+async function downloadPDF(reqId){
+  const req=DB.get('requests',[]).find(r=>r.id===reqId);
+  if(!req)return;
+  Swal.fire({title:'กำลังสร้าง PDF...',didOpen:()=>Swal.showLoading(),allowOutsideClick:false});
+  try{
+    const wrap=document.createElement('div');
+    wrap.style.cssText='position:fixed;left:-9999px;top:0;width:794px;padding:40px;background:white;font-family:Sarabun,sans-serif;color:#000';
+    wrap.innerHTML=buildFormHTML(req);
+    document.body.appendChild(wrap);
+    const canvas=await html2canvas(wrap,{scale:2,useCORS:true,backgroundColor:'#fff'});
+    const {jsPDF}=window.jspdf;
+    const pdf=new jsPDF('p','mm','a4');
+    const w=210, h=(canvas.height*w)/canvas.width;
+    const img=canvas.toDataURL('image/png');
+    if(h>297){
+      let posY=0;
+      const pageH=canvas.width*297/210;
+      while(posY<canvas.height){
+        const sh=Math.min(pageH,canvas.height-posY);
+        const tmp=document.createElement('canvas');
+        tmp.width=canvas.width;tmp.height=sh;
+        tmp.getContext('2d').drawImage(canvas,0,posY,canvas.width,sh,0,0,canvas.width,sh);
+        if(posY>0)pdf.addPage();
+        pdf.addImage(tmp.toDataURL('image/png'),'PNG',0,0,w,(sh*w)/canvas.width);
+        posY+=sh;
+      }
+    }else{
+      pdf.addImage(img,'PNG',0,0,w,h);
+    }
+    pdf.save(`สว01_${req.firstName}_${req.lastName}.pdf`);
+    document.body.removeChild(wrap);
+    Swal.close();
+    toast('success','ดาวน์โหลดแล้ว');
+  }catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+}
+window.downloadPDF=downloadPDF;
+
+function buildFormHTML(r){
+  const sig=(url,style='height:55px')=>url?`<img src="${url}" style="${style};object-fit:contain;display:block;margin:0 auto">`:'';
+  const cb=(c,label)=>`<span style="margin-right:12px">${c?'☑':'☐'} ${label}</span>`;
+  const rows=(r.subjects||[]).map(s=>`<tr><td style="border:1px solid #000;padding:4px;text-align:center">${esc(s.order)}</td><td style="border:1px solid #000;padding:4px">${esc(s.code)}</td><td style="border:1px solid #000;padding:4px">${esc(s.name)}</td><td style="border:1px solid #000;padding:4px">${esc(s.time)}</td></tr>`).join('');
+  return `
+    <div style="text-align:center;margin-bottom:10px"><div style="font-size:20px;font-weight:bold">แบบคำร้องขอเข้าห้องสอบ</div><div style="font-size:14px">(สว. 01)</div></div>
+    <div style="margin-bottom:8px;font-size:14px">วันที่ ${esc(r.day)} ${esc(r.month)} พ.ศ. ${esc(r.year)}<br>เรื่อง ขอเข้าห้องสอบ<br>เรียน ผู้อำนวยการ</div>
+    <div style="font-size:14px;line-height:1.7;text-indent:30px;margin-bottom:8px">ด้วยข้าพเจ้า <b>${esc(r.firstName)} ${esc(r.lastName)}</b> ชั้น <b>${esc(r.className)}</b> ห้องสอบ <b>${esc(r.room)}</b> ตึก <b>${esc(r.building)}</b> เบอร์โทร <b>${esc(r.phone)}</b> มีความประสงค์ขอเข้าห้องสอบ ${cb(r.examType==='กลางภาค','กลางภาค')}${cb(r.examType==='ปลายภาค','ปลายภาค')} ภาคเรียนที่ <b>${esc(r.term)}</b> ปีการศึกษา <b>${esc(r.academicYear)}</b> เนื่องจาก <b>${esc(r.reason)}</b> ซึ่งมีรายวิชาที่สอบของวันที่ <b>${esc(r.examDate)}</b> ดังนี้</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:15px"><thead><tr style="background:#f0f0f0"><th style="border:1px solid #000;padding:5px;width:60px">ลำดับ</th><th style="border:1px solid #000;padding:5px">รหัสวิชา</th><th style="border:1px solid #000;padding:5px">ชื่อวิชา</th><th style="border:1px solid #000;padding:5px">เวลาสอบ</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="text-align:right;font-size:14px;margin-bottom:15px;padding-right:20px">ลงชื่อ ${sig(r.signatures?.student,'height:50px')}<div style="margin-top:4px">( ${esc(r.firstName)} ${esc(r.lastName)} )</div><div>นักเรียน</div></div>
+    <div style="border:1px solid #000;padding:10px;font-size:13px;margin-bottom:10px"><b>ความเห็นครูที่ปรึกษา</b><br>${cb(r.teacherApproval==='approve','เห็นควรอนุญาต')} ${cb(r.teacherApproval==='reject','ไม่เห็นควร')}${r.teacherNote?`<div>หมายเหตุ: ${esc(r.teacherNote)}</div>`:''}<div style="text-align:right;margin-top:6px">ลงชื่อ ${sig(r.signatures?.teacher,'height:45px')}<div>( ${esc(r.teacherName||'........................')} )</div><div>ครูที่ปรึกษา</div></div></div>
+    <div style="border:1px solid #000;padding:10px;font-size:13px;margin-bottom:10px"><b>ความเห็นงานวัดและประเมินผล</b><br>${cb(r.evalApproval==='approve','เห็นควรอนุญาต')} ${cb(r.evalApproval==='reject','ไม่เห็นควร')}${r.evalNote?`<div>หมายเหตุ: ${esc(r.evalNote)}</div>`:''}<div style="text-align:right;margin-top:6px">ลงชื่อ ${sig(r.signatures?.eval,'height:45px')}<div>( ${esc(r.evalName||'........................')} )</div><div>งานวัดและประเมินผล</div></div></div>
+    <div style="border:1px solid #000;padding:10px;font-size:13px"><b>ความเห็นรองผู้อำนวยการงานบริหารวิชาการ</b><br>${cb(r.deputyApproval==='approve','เห็นควรอนุญาต')} ${cb(r.deputyApproval==='reject','ไม่เห็นควร')}${r.deputyNote?`<div>หมายเหตุ: ${esc(r.deputyNote)}</div>`:''}<div style="text-align:right;margin-top:6px">ลงชื่อ ${sig(r.signatures?.deputy,'height:45px')}<div>( ${esc(r.deputyName||'........................')} )</div><div>รองผู้อำนวยการงานบริหารวิชาการ</div></div></div>`;
+}
+
+// ============================================================
+// CLICK HANDLER (async)
+// ============================================================
+document.addEventListener('click', async e=>{
+  const el=e.target.closest('[data-action]');
+  if(!el)return;
+  const action=el.dataset.action;
+  const id=el.dataset.id;
+
+  if(action==='nav'){e.preventDefault();navigate(el.dataset.page);return}
+  if(action==='open-sidebar'){state.sidebarOpen=true;renderApp();return}
+  if(action==='close-sidebar'){state.sidebarOpen=false;renderApp();return}
+  if(action==='open-login'){openLoginModal();return}
+  if(action==='logout'){
+    Swal.fire({title:'ออกจากระบบ?',icon:'question',showCancelButton:true,confirmButtonText:'ออก',cancelButtonText:'ยกเลิก',confirmButtonColor:'#ef4444'})
+      .then(r=>{if(r.isConfirmed){logout();renderApp();toast('success','ออกแล้ว')}});
+    return;
+  }
+  if(action==='open-signature'){openSignatureModal(el.dataset.target);return}
+  if(action==='add-subject'){addSubjectRow();return}
+  if(action==='remove-subject'){el.closest('tr').remove();return}
+  if(action==='reset-form'){
+    document.getElementById('studentForm')?.reset();
+    initSubjects();
+    document.getElementById('studentSigPreview').innerHTML='ยังไม่มีลายเซ็น';
+    document.getElementById('studentSignature').value='';
+    document.getElementById('sigNamePreview').textContent='-';
+    return;
+  }
+
+  if(action==='add-user'){openUserForm();return}
+  if(action==='edit-user'){openUserForm(id);return}
+  if(action==='del-user'){
+    Swal.fire({title:'ลบผู้ใช้?',icon:'warning',showCancelButton:true,confirmButtonText:'ลบ',cancelButtonText:'ยกเลิก',confirmButtonColor:'#ef4444'})
+      .then(async r=>{
+        if(r.isConfirmed){
+          try{ await apiCall('deleteUser',{id}); await DB.load(); toast('success','ลบแล้ว'); renderApp(); }
+          catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+        }
+      });
+    return;
+  }
+
+  if(action==='add-sem'){openSemForm();return}
+  if(action==='set-current-sem'){
+    try{ await apiCall('setCurrentSemester',{id}); await DB.load(); toast('success','ตั้งเป็นปัจจุบัน'); renderApp(); }
+    catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+    return;
+  }
+  if(action==='del-sem'){
+    Swal.fire({title:'ลบภาคเรียน?',icon:'warning',showCancelButton:true,confirmButtonText:'ลบ',cancelButtonText:'ยกเลิก',confirmButtonColor:'#ef4444'})
+      .then(async r=>{
+        if(r.isConfirmed){
+          try{ await apiCall('deleteSemester',{id}); await DB.load(); toast('success','ลบแล้ว'); renderApp(); }
+          catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+        }
+      });
+    return;
+  }
+
+  if(action==='add-class'){openClassForm();return}
+  if(action==='edit-class'){openClassForm(id);return}
+  if(action==='del-class'){
+    Swal.fire({title:'ลบชั้นเรียน?',icon:'warning',showCancelButton:true,confirmButtonText:'ลบ',cancelButtonText:'ยกเลิก',confirmButtonColor:'#ef4444'})
+      .then(async r=>{
+        if(r.isConfirmed){
+          try{ await apiCall('deleteClass',{id}); await DB.load(); toast('success','ลบแล้ว'); renderApp(); }
+          catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+        }
+      });
+    return;
+  }
+
+  if(action==='view-request'){openRequestDetail(id);return}
+
+  if(action==='save-theme'){
+    const newTheme={primary:document.getElementById('colorPrimary').value,secondary:document.getElementById('colorSecondary').value};
+    try{
+      await apiCall('saveTheme',{theme:newTheme});
+      state.theme=newTheme; DB.data.theme=newTheme; applyTheme();
+      toast('success','บันทึกแล้ว');
+    }catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+    renderApp(); return;
+  }
+  if(action==='reset-theme'){
+    const def={primary:'#10b981',secondary:'#fbbf24'};
+    try{
+      await apiCall('saveTheme',{theme:def});
+      state.theme=def; DB.data.theme=def; applyTheme();
+      toast('success','รีเซ็ตแล้ว');
+    }catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+    renderApp(); return;
+  }
+
+  if(action==='page-prev'){state.filterPage=Math.max(1,state.filterPage-1);renderApp();return}
+  if(action==='page-next'){state.filterPage++;renderApp();return}
+});
+
+// ============================================================
+// LOGIN
+// ============================================================
+function openLoginModal(){
+  Swal.fire({
+    title:'เข้าสู่ระบบ',
+    html:`<input id="loginUser" placeholder="Username" class="swal2-input" autocomplete="username"><input id="loginPass" type="password" placeholder="Password" class="swal2-input" autocomplete="current-password">`,
+    confirmButtonText:'เข้าสู่ระบบ', cancelButtonText:'ยกเลิก', showCancelButton:true,
+    confirmButtonColor:state.theme.primary,
+    preConfirm:()=>{
+      const u=document.getElementById('loginUser').value.trim();
+      const p=document.getElementById('loginPass').value;
+      if(!u||!p){Swal.showValidationMessage('กรอกให้ครบ');return}
+      if(!login(u,p)){Swal.showValidationMessage('ผิดพลาด');return}
+      return true;
+    }
+  }).then(r=>{
+    if(r.isConfirmed){
+      toast('success','เข้าสู่ระบบสำเร็จ');
+      state.page = state.user.role==='admin'?'home':state.user.role;
+      renderApp();
+    }
+  });
+}
+
+// ============================================================
+// USER FORM
+// ============================================================
+function openUserForm(id){
+  const users=DB.get('users',[]);
+  const u=id?users.find(x=>x.id===id):{username:'',password:'',fullName:'',role:'teacher',position:''};
+  Swal.fire({
+    title:id?'แก้ไขผู้ใช้':'เพิ่มผู้ใช้',
+    html:`
+      <div class="text-left space-y-2">
+        <input id="uf_user" placeholder="Username" value="${esc(u.username)}" class="swal2-input">
+        <input id="uf_pass" placeholder="Password" value="${esc(u.password)}" class="swal2-input">
+        <input id="uf_name" placeholder="ชื่อ-นามสกุล" value="${esc(u.fullName)}" class="swal2-input">
+        <select id="uf_role" class="swal2-input">${Object.entries(ROLE_LABELS).map(([k,v])=>`<option value="${k}" ${u.role===k?'selected':''}>${v}</option>`).join('')}</select>
+        <input id="uf_pos" placeholder="ตำแหน่ง" value="${esc(u.position||'')}" class="swal2-input">
+      </div>`,
+    width:'450px', showCancelButton:true, confirmButtonText:'บันทึก', cancelButtonText:'ยกเลิก',
+    confirmButtonColor:state.theme.primary,
+    preConfirm:()=>{
+      const data={
+        username:document.getElementById('uf_user').value.trim(),
+        password:document.getElementById('uf_pass').value,
+        fullName:document.getElementById('uf_name').value.trim(),
+        role:document.getElementById('uf_role').value,
+        position:document.getElementById('uf_pos').value.trim()
+      };
+      if(!data.username||!data.password||!data.fullName)return Swal.showValidationMessage('กรอกให้ครบ');
+      return data;
+    }
+  }).then(async r=>{
+    if(r.isConfirmed && r.value){
+      try{
+        const userData={...r.value, id:id||uid(), createdAt:Date.now()};
+        await apiCall('saveUser',{user:userData, isEdit:!!id});
+        await DB.load();
+        toast('success',id?'แก้ไขแล้ว':'เพิ่มแล้ว');
+        renderApp();
+      }catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+    }
+  });
+}
+
+// ============================================================
+// SEM FORM
+// ============================================================
+function openSemForm(){
+  Swal.fire({
+    title:'เพิ่มภาคเรียน',
+    html:`<select id="sf_term" class="swal2-input"><option value="1">ภาคเรียนที่ 1</option><option value="2">ภาคเรียนที่ 2</option></select><input id="sf_year" type="number" placeholder="ปีการศึกษา" value="2568" class="swal2-input">`,
+    showCancelButton:true, confirmButtonText:'บันทึก', cancelButtonText:'ยกเลิก', confirmButtonColor:state.theme.primary,
+    preConfirm:()=>{
+      const term=document.getElementById('sf_term').value;
+      const year=+document.getElementById('sf_year').value;
+      if(!year)return Swal.showValidationMessage('กรอกปี');
+      return {term,year};
+    }
+  }).then(async r=>{
+    if(r.isConfirmed && r.value){
+      try{
+        await apiCall('saveSemester',{semester:{id:uid(),...r.value,current:false}});
+        await DB.load();
+        toast('success','เพิ่มแล้ว'); renderApp();
+      }catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+    }
+  });
+}
+
+// ============================================================
+// CLASS FORM
+// ============================================================
+function openClassForm(id){
+  const classes=DB.get('classes',[]);
+  const teachers=DB.get('users',[]).filter(u=>u.role==='teacher');
+  const c=id?classes.find(x=>x.id===id):{name:'',advisors:[]};
+  Swal.fire({
+    title:id?'แก้ไขชั้นเรียน':'เพิ่มชั้นเรียน',
+    html:`
+      <div class="text-left space-y-2">
+        <input id="cf_name" placeholder="ชื่อชั้น" value="${esc(c.name)}" class="swal2-input">
+        <div class="text-xs text-gray-600 mb-1">ครูที่ปรึกษา</div>
+        <div class="max-h-48 overflow-y-auto border rounded p-2 bg-gray-50 space-y-1">
+          ${teachers.length?teachers.map(t=>`<label class="flex items-center gap-2 p-1 hover:bg-white rounded cursor-pointer text-sm"><input type="checkbox" value="${t.id}" ${(c.advisors||[]).includes(t.id)?'checked':''} class="cf_adv"><span>${esc(t.fullName)}</span></label>`).join(''):'<div class="text-xs text-gray-400 p-2">ยังไม่มีครู</div>'}
+        </div>
+      </div>`,
+    width:'500px', showCancelButton:true, confirmButtonText:'บันทึก', cancelButtonText:'ยกเลิก', confirmButtonColor:state.theme.primary,
+    preConfirm:()=>{
+      const name=document.getElementById('cf_name').value.trim();
+      if(!name)return Swal.showValidationMessage('กรอกชื่อชั้น');
+      const advisors=[...document.querySelectorAll('.cf_adv:checked')].map(x=>x.value);
+      return {name,advisors};
+    }
+  }).then(async r=>{
+    if(r.isConfirmed && r.value){
+      try{
+        await apiCall('saveClass',{class:{id:id||uid(),...r.value}, isEdit:!!id});
+        await DB.load();
+        toast('success',id?'แก้ไขแล้ว':'เพิ่มแล้ว'); renderApp();
+      }catch(e){ Swal.fire('ผิดพลาด',e.message,'error'); }
+    }
+  });
+}
+
+// ============================================================
+// SUBJECT ROWS
+// ============================================================
+let subjectCount=0;
+function initSubjects(){
+  subjectCount=0;
+  const tbody=document.getElementById('subjectRows');
+  if(!tbody)return;
+  tbody.innerHTML='';
+  for(let i=0;i<3;i++)addSubjectRow();
+}
+function addSubjectRow(){
+  const tbody=document.getElementById('subjectRows');
+  if(!tbody)return;
+  if(subjectCount>=7){toast('warning','สูงสุด 7 รายวิชา');return}
+  const idx=subjectCount++;
+  tbody.insertAdjacentHTML('beforeend',renderSubjectRow(idx));
+}
+
+// ============================================================
+// FILTER EVENTS
+// ============================================================
+document.addEventListener('change',e=>{
+  const f=e.target.dataset.filter;
+  if(!f)return;
+  if(f==='sem')state.filterSem=e.target.value;
+  else if(f==='class')state.filterClass=e.target.value;
+  else if(f==='pageSize'){state.filterPageSize=e.target.value==='all'?'all':+e.target.value;state.filterPage=1}
+  renderApp();
+});
+document.addEventListener('input',e=>{
+  if(e.target.dataset.filter==='search'){
+    state.filterSearch=e.target.value;
+    state.filterPage=1;
+    clearTimeout(window._searchTimer);
+    window._searchTimer=setTimeout(()=>renderApp(),300);
+  }
+  if(e.target.name==='firstName'||e.target.name==='lastName'){
+    const f=document.querySelector('[name=firstName]')?.value||'';
+    const l=document.querySelector('[name=lastName]')?.value||'';
+    const p=document.getElementById('sigNamePreview');
+    if(p)p.textContent=(f+' '+l).trim()||'-';
+  }
+});
+
+// ============================================================
+// STUDENT SUBMIT
+// ============================================================
+document.addEventListener('submit', async e=>{
+  if(e.target.id!=='studentForm')return;
+  e.preventDefault();
+  const fd=new FormData(e.target);
+  const sig=document.getElementById('studentSignature').value;
+  if(!sig){ Swal.fire('แจ้งเตือน','กรุณาเซ็นลายเซ็น','warning'); return; }
+
+  const classes=DB.get('classes',[]);
+  const classId=fd.get('classId');
+  const cls=classes.find(c=>c.id===classId);
+  if(!cls || !cls.advisors || cls.advisors.length===0){
+    Swal.fire('แจ้งเตือน','ชั้นนี้ยังไม่มีครูที่ปรึกษา','warning'); return;
+  }
+
+  const subjects=[];
+  for(let i=0;i<subjectCount;i++){
+    if(!fd.get('code_'+i))continue;
+    subjects.push({order:fd.get('order_'+i),code:fd.get('code_'+i),name:fd.get('name_'+i),time:fd.get('time_'+i)});
+  }
+  if(subjects.length===0){ Swal.fire('แจ้งเตือน','กรุณากรอกรายวิชา','warning'); return; }
+
+  Swal.fire({title:'กำลังบันทึก...',didOpen:()=>Swal.showLoading(),allowOutsideClick:false});
+  try{
+    const sigUrl = await uploadSignature(sig, 'student_'+fd.get('firstName'));
+    const req={
+      id:uid(),
+      day:fd.get('day'), month:fd.get('month'), year:fd.get('year'),
+      firstName:fd.get('firstName'), lastName:fd.get('lastName'),
+      classId, className:cls.name,
+      room:fd.get('room'), building:fd.get('building'), phone:fd.get('phone'),
+      examType:fd.get('examType'), term:fd.get('term'), academicYear:fd.get('academicYear'),
+      reason:fd.get('reason'), examDate:fd.get('examDate'),
+      subjects,
+      signatures:{student:sigUrl,teacher:'',eval:'',deputy:''},
+      status:'pending_teacher',
+      teacherApproval:'', evalApproval:'', deputyApproval:'',
+      teacherNote:'', evalNote:'', deputyNote:'',
+      teacherName:'', evalName:'', deputyName:'',
+      createdAt:Date.now()
+    };
+    await apiCall('saveRequest',{request:req});
+    await DB.load();
+    Swal.fire({icon:'success',title:'ส่งคำร้องสำเร็จ',html:`สถานะ: ${STAGE_INFO.pending_teacher.label}`,confirmButtonColor:state.theme.primary})
+      .then(()=>{
+        e.target.reset(); initSubjects();
+        document.getElementById('studentSigPreview').innerHTML='ยังไม่มีลายเซ็น';
+        document.getElementById('sigNamePreview').textContent='-';
+        state.page='home'; renderApp();
+      });
+  }catch(err){
+    Swal.fire('ผิดพลาด',err.message,'error');
+  }
+});
+
+// ============================================================
+// BIND
+// ============================================================
+function bindPageEvents(){
+  if(state.page==='student') initSubjects();
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+(async function boot(){
+  applyTheme();
+  state.loading=true;
+  renderApp();
+  try{
+    await DB.load();
+    state.theme=DB.get('theme',state.theme);
+    applyTheme();
+  }catch(e){
+    console.error(e);
+    Swal.fire({
+      icon:'error',
+      title:'เชื่อมต่อ Google Sheet ไม่ได้',
+      html:`<div style="text-align:left;font-size:.85rem;line-height:1.7">
+        <b>สาเหตุ:</b> ${esc(e.message)}<br><br>
+        <b>ตรวจสอบ:</b><br>
+        • API_URL ตั้งค่าถูกต้องหรือยัง<br>
+        • Deploy Apps Script เป็น Web App แล้วหรือยัง<br>
+        • Who has access = <b>Anyone</b><br>
+        • รันฟังก์ชัน setup ใน Apps Script แล้วหรือยัง
+      </div>`,
+      confirmButtonText:'ลองใหม่'
+    }).then(()=>boot());
+  }
+  state.loading=false;
+  renderApp();
+})();
+
+</script>
+</body>
+</html>
