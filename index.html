@@ -755,10 +755,20 @@ function renderApprovalQueue(role) {
   const semesters = DB.get('semesters', []);
   const classes = DB.get('classes', []);
 
-  // ครูเห็นเฉพาะห้องที่ตนเป็นที่ปรึกษา (ยกเว้นแอดมินดูได้หมด)
+  // ครูเห็นเฉพาะห้องที่ตนเป็นที่ปรึกษา (ยกเว้นแอดมินดูได้หมด หรือครูที่ยังไม่ได้ผูกห้อง)
   if (role === 'teacher' && state.user && state.user.role !== 'admin') {
-    const myClassIds = classes.filter(c => (c.advisors || []).includes(state.user.id)).map(c => c.id);
-    requests = requests.filter(r => myClassIds.includes(r.classId));
+    const myClassIds = classes.filter(c => {
+      let advs = [];
+      if (Array.isArray(c.advisors)) advs = c.advisors;
+      else if (typeof c.advisors === 'string') {
+        try { advs = JSON.parse(c.advisors); } catch(e) { advs = [c.advisors]; }
+      }
+      return advs.includes(state.user.id) || (c.advisorNames && c.advisorNames.includes(state.user.fullName));
+    }).map(c => c.id);
+
+    if (myClassIds.length > 0) {
+      requests = requests.filter(r => myClassIds.includes(r.classId));
+    }
   }
 
   requests = requests.filter(r => r.status === roleMap[role]);
@@ -1004,33 +1014,79 @@ function removeWhiteBackground(img) {
 }
 
 // ============================================================
+// HELPER: DIRECT DRIVE IMAGE URL (แปลงลิงก์ Drive เป็นรูปภาพตรง)
+// ============================================================
+function formatSigUrl(url) {
+  if (!url) return '';
+  const str = String(url).trim();
+  if (!str) return '';
+  if (str.startsWith('data:image/')) return str;
+  const match = str.match(/[-\w]{25,}/);
+  if (match) {
+    return `https://lh3.googleusercontent.com/d/${match[0]}`;
+  }
+  return str;
+}
+
+// ============================================================
 // REQUEST DETAIL / APPROVAL MODAL
 // ============================================================
 function openRequestDetail(reqId) {
   const req = DB.get('requests', []).find(r => r.id === reqId);
   if (!req) return;
-  const role = state.user?.role;
-  const canAct = { teacher: 'pending_teacher', eval: 'pending_eval', deputy: 'pending_deputy' }[role];
-  const canSign = req.status === canAct;
-  window._sigTemp = null;
+  const userRole = state.user?.role;
+  let activeRole = userRole;
+  let canSign = false;
+
+  // ตรวจสอบสิทธิ์การอนุมัติในแต่ละขั้นตอน
+  if (userRole === 'teacher' && req.status === 'pending_teacher') {
+    canSign = true;
+    activeRole = 'teacher';
+  } else if (userRole === 'eval' && req.status === 'pending_eval') {
+    canSign = true;
+    activeRole = 'eval';
+  } else if (userRole === 'deputy' && req.status === 'pending_deputy') {
+    canSign = true;
+    activeRole = 'deputy';
+  } else if (userRole === 'admin') {
+    // แอดมินสามารถลงนามแทนในแต่ละขั้นตอนได้สำหรับการทดสอบหรือจัดการระบบ
+    if (req.status === 'pending_teacher') { canSign = true; activeRole = 'teacher'; }
+    else if (req.status === 'pending_eval') { canSign = true; activeRole = 'eval'; }
+    else if (req.status === 'pending_deputy') { canSign = true; activeRole = 'deputy'; }
+  }
+
+  window._apprUploadedSig = null;
+  window._hasDrawnAppr = false;
 
   const subjects = (req.subjects || []).map(s => `<tr><td class="border px-2 py-1 text-center text-xs">${esc(s.order)}</td><td class="border px-2 py-1 text-xs">${esc(s.code)}</td><td class="border px-2 py-1 text-xs">${esc(s.name)}</td><td class="border px-2 py-1 text-xs">${esc(s.time)}</td></tr>`).join('');
 
-  const sigBox = (label, name, url, approval, note) => `
-    <div class="border rounded-lg p-3 bg-gray-50">
-      <div class="text-xs font-semibold text-gray-700 mb-1">${label}</div>
-      ${url ? `<img src="${url}" style="max-height:50px;max-width:120px">` : '<div class="text-xs text-gray-400">— ยังไม่ลงนาม —</div>'}
-      ${name ? `<div class="text-[11px] text-gray-600 mt-1">(${esc(name)})</div>` : ''}
-      ${approval ? `<div class="text-[11px] mt-1">${approval === 'approve' ? '<span class="text-emerald-600">✓ เห็นควรอนุญาต</span>' : '<span class="text-red-600">✗ ไม่เห็นควร</span>'}</div>` : ''}
-      ${note ? `<div class="text-[11px] text-gray-600">หมายเหตุ: ${esc(note)}</div>` : ''}
+  const sigBox = (label, name, url, approval, note) => {
+    const imgUrl = formatSigUrl(url);
+    const fileId = (url && String(url).match(/[-\w]{25,}/)) ? String(url).match(/[-\w]{25,}/)[0] : '';
+    return `
+    <div class="border rounded-xl p-3 bg-gray-50 flex flex-col justify-between">
+      <div>
+        <div class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center justify-between">
+          <span>${label}</span>
+          ${approval ? `<span class="text-[11px] font-bold ${approval === 'approve' ? 'text-emerald-600' : 'text-red-600'}">${approval === 'approve' ? '✓ เห็นควร' : '✗ ไม่เห็นควร'}</span>` : ''}
+        </div>
+        <div class="h-14 flex items-center justify-center bg-white rounded-lg border border-dashed border-gray-200 p-1">
+          ${imgUrl ? `<img src="${imgUrl}" alt="ลายเซ็น${label}" class="max-h-12 max-w-[140px] object-contain" onerror="if(this.dataset.fb!='1'){this.dataset.fb='1';this.src='https://drive.google.com/thumbnail?id=${fileId}&sz=w500';}else{this.parentElement.innerHTML='<span class=\\'text-[11px] text-gray-400\\'>มีลายเซ็นในระบบ</span>';}">` : '<span class="text-xs text-gray-400">— ยังไม่ลงนาม —</span>'}
+        </div>
+      </div>
+      <div class="mt-2 text-center border-t border-gray-100 pt-1">
+        ${name ? `<div class="text-[11px] font-medium text-gray-700 truncate">(${esc(name)})</div>` : '<div class="text-[11px] text-gray-400">-</div>'}
+        ${note ? `<div class="text-[10px] text-gray-500 mt-0.5 text-left bg-white p-1 rounded border"><b>หมายเหตุ:</b> ${esc(note)}</div>` : ''}
+      </div>
     </div>`;
+  };
 
   Swal.fire({
-    title: '<span style="font-size:1.1rem">รายละเอียดคำร้อง สว.01</span>',
-    width: 'min(720px,95vw)',
+    title: '<span style="font-size:1.15rem;font-weight:700">รายละเอียดคำร้อง สว.01</span>',
+    width: 'min(740px,96vw)',
     html: `
-      <div class="text-left text-sm space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-        <div class="grid grid-cols-2 gap-2 text-xs">
+      <div class="text-left text-sm space-y-3.5 max-h-[74vh] overflow-y-auto pr-1">
+        <div class="grid grid-cols-2 gap-2 text-xs bg-gray-50 p-3 rounded-xl border border-gray-100">
           <div><b>ชื่อ:</b> ${esc(req.firstName)} ${esc(req.lastName)}</div>
           <div><b>ชั้น:</b> ${esc(req.className)}</div>
           <div><b>ห้องสอบ:</b> ${esc(req.room)}</div>
@@ -1042,92 +1098,293 @@ function openRequestDetail(reqId) {
           <div class="col-span-2"><b>สอบวันที่:</b> ${esc(req.examDate)}</div>
           <div class="col-span-2"><b>เนื่องจาก:</b> ${esc(req.reason)}</div>
         </div>
+
         <table class="w-full border-collapse"><thead><tr class="bg-gray-100">
           <th class="border px-2 py-1 text-xs w-12 text-center">ลำดับ</th>
           <th class="border px-2 py-1 text-xs">รหัสวิชา</th>
           <th class="border px-2 py-1 text-xs">ชื่อวิชา</th>
           <th class="border px-2 py-1 text-xs">เวลา</th>
         </tr></thead><tbody>${subjects}</tbody></table>
+
         <div class="grid grid-cols-2 gap-2">
           ${sigBox('นักเรียน', req.firstName + ' ' + req.lastName, req.signatures?.student)}
           ${sigBox('ครูที่ปรึกษา', req.teacherName, req.signatures?.teacher, req.teacherApproval, req.teacherNote)}
           ${sigBox('งานวัดและประเมินผล', req.evalName, req.signatures?.eval, req.evalApproval, req.evalNote)}
           ${sigBox('รองผู้อำนวยการ', req.deputyName, req.signatures?.deputy, req.deputyApproval, req.deputyNote)}
         </div>
+
         ${req.status === 'complete' ? `
           <div class="pt-2 space-y-2">
-            ${req.pdfUrl ? `<a href="${req.pdfUrl}" target="_blank" class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"><i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF ทางการ (Google Drive)</a>` : ''}
+            ${req.pdfUrl ? `<a href="${req.pdfUrl}" target="_blank" class="w-full btn-primary py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm"><i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF ทางการ (Google Drive)</a>` : ''}
             <button onclick="downloadPDF('${req.id}')" class="w-full border border-gray-300 hover:bg-gray-50 py-2 rounded-lg text-xs font-medium text-gray-700 flex items-center justify-center gap-2"><i class="fa-solid fa-file-arrow-down"></i> ดาวน์โหลด PDF สำรอง (Browser)</button>
           </div>
         ` : ''}
+
         ${canSign ? `
-          <div class="border-t pt-3 space-y-2">
-            <div class="font-semibold text-sm">การพิจารณาอนุมัติ (${ROLE_LABELS[role] || role})</div>
+          <div class="border-t-2 border-emerald-100 pt-3 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="font-bold text-sm text-gray-800 flex items-center gap-1.5">
+                <i class="fa-solid fa-stamp text-emerald-600"></i>
+                การพิจารณาอนุมัติ (${ROLE_LABELS[activeRole] || activeRole})
+                ${userRole === 'admin' ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-normal">สิทธิ์แอดมิน</span>' : ''}
+              </div>
+              <span class="text-xs text-gray-500">ขั้นตอนที่ ${activeRole === 'teacher' ? '2 (ครู)' : activeRole === 'eval' ? '3 (วัดผล)' : '4 (รองฯ)'}</span>
+            </div>
+
             <div class="flex gap-2">
-              <label class="flex-1 border-2 rounded-lg p-2 cursor-pointer flex items-center gap-2 text-sm has-[:checked]:border-emerald-500 has-[:checked]:bg-emerald-50"><input type="radio" name="approve" value="approve" checked> เห็นควรอนุญาต</label>
-              <label class="flex-1 border-2 rounded-lg p-2 cursor-pointer flex items-center gap-2 text-sm has-[:checked]:border-red-500 has-[:checked]:bg-red-50"><input type="radio" name="approve" value="reject"> ไม่เห็นควรอนุญาต</label>
+              <label class="flex-1 border-2 rounded-xl p-2.5 cursor-pointer flex items-center gap-2 text-sm font-semibold transition has-[:checked]:border-emerald-500 has-[:checked]:bg-emerald-50 has-[:checked]:text-emerald-800">
+                <input type="radio" name="apprChoice" value="approve" checked class="text-emerald-600 w-4 h-4">
+                <span>✓ เห็นควรอนุญาต</span>
+              </label>
+              <label class="flex-1 border-2 rounded-xl p-2.5 cursor-pointer flex items-center gap-2 text-sm font-semibold transition has-[:checked]:border-red-500 has-[:checked]:bg-red-50 has-[:checked]:text-red-800">
+                <input type="radio" name="apprChoice" value="reject" class="text-red-600 w-4 h-4">
+                <span>✗ ไม่เห็นควรอนุญาต</span>
+              </label>
             </div>
-            <textarea id="approveNote" placeholder="หมายเหตุ / ความเห็นเพิ่มเติม (ถ้ามี)" class="w-full border rounded-lg px-3 py-2 text-sm"></textarea>
-            <div class="flex items-center gap-2">
-              <div id="signPreview" class="w-32 h-16 border rounded bg-white flex items-center justify-center text-xs text-gray-400">ยังไม่มีลายเซ็น</div>
-              <button type="button" onclick="openSignatureModal('approver')" class="btn-primary px-3 py-2 rounded-lg text-xs"><i class="fa-solid fa-pen-nib mr-1"></i> ลงลายเซ็น</button>
+
+            <div>
+              <label class="text-xs font-semibold text-gray-700 block mb-1">หมายเหตุ / ความเห็นเพิ่มเติม (ถ้ามี):</label>
+              <textarea id="apprNoteText" rows="2" placeholder="ระบุความเห็นหรือข้อเสนอแนะเพิ่มเติม..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></textarea>
             </div>
-          </div>`: ''}
+
+            <div class="border border-gray-200 rounded-xl p-3 bg-gray-50">
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs font-bold text-gray-700 flex items-center gap-1">
+                  <i class="fa-solid fa-signature text-primary"></i> ลายเซ็นผู้พิจารณาอนุมัติ <span class="text-red-500">*</span>
+                </label>
+                <div class="flex gap-1 bg-gray-200 p-0.5 rounded-lg text-xs">
+                  <button type="button" id="tabApprDraw" class="px-2.5 py-1 rounded-md font-semibold bg-emerald-600 text-white shadow-sm transition">✍ วาดลายเซ็น</button>
+                  <button type="button" id="tabApprUpload" class="px-2.5 py-1 rounded-md font-medium text-gray-600 hover:text-gray-900 transition">⬆ อัปโหลดรูปภาพ</button>
+                </div>
+              </div>
+
+              <!-- 1. แผ่นวาดลายเซ็น (Canvas) -->
+              <div id="paneApprDraw" class="space-y-1">
+                <div class="border-2 border-dashed border-gray-300 rounded-lg bg-white overflow-hidden relative">
+                  <canvas id="apprSigCanvas" width="460" height="150" class="w-full touch-none cursor-crosshair bg-white" style="height:140px"></canvas>
+                  <div class="absolute bottom-1 right-1">
+                    <button type="button" id="btnClearApprCanvas" class="text-[11px] text-gray-500 hover:text-red-600 bg-white/90 border border-gray-200 px-2 py-0.5 rounded shadow-sm">
+                      <i class="fa-solid fa-rotate-left mr-1"></i>ล้างกระดาน
+                    </button>
+                  </div>
+                </div>
+                <p class="text-[11px] text-gray-500">เซ็นด้วยนิ้วบนจอมือถือ หรือลากเมาส์เพื่อลงลายเซ็น</p>
+              </div>
+
+              <!-- 2. อัปโหลดรูปภาพลายเซ็น (Upload) -->
+              <div id="paneApprUpload" style="display:none" class="space-y-2 py-1">
+                <input type="file" id="apprSigFileInput" accept="image/png,image/jpeg" class="w-full text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer">
+                <p class="text-[11px] text-gray-500">รองรับไฟล์ PNG, JPG (ระบบจะตัดพื้นหลังขาวออกให้โปร่งใสโดยอัตโนมัติ)</p>
+                <div id="apprSigFilePreview" class="min-h-[70px] bg-white border border-dashed border-gray-300 rounded-lg flex items-center justify-center p-2">
+                  <span class="text-xs text-gray-400">ยังไม่ได้เลือกรูปภาพลายเซ็น</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
       </div>
     `,
-    showCancelButton: canSign, showConfirmButton: canSign,
-    confirmButtonText: 'บันทึกการอนุมัติ', cancelButtonText: 'ปิด',
+    showCancelButton: canSign,
+    showConfirmButton: canSign,
+    confirmButtonText: 'บันทึกการอนุมัติ',
+    cancelButtonText: 'ปิด',
     confirmButtonColor: state.theme.primary,
+    didOpen: () => {
+      if (!canSign) return;
+      const canvas = document.getElementById('apprSigCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#1e293b';
+
+      let drawing = false;
+      let lastX = 0, lastY = 0;
+      window._hasDrawnAppr = false;
+
+      const getPos = e => {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          x: (clientX - rect.left) * (canvas.width / rect.width),
+          y: (clientY - rect.top) * (canvas.height / rect.height)
+        };
+      };
+
+      const start = e => {
+        e.preventDefault();
+        drawing = true;
+        window._hasDrawnAppr = true;
+        const p = getPos(e);
+        lastX = p.x; lastY = p.y;
+      };
+
+      const move = e => {
+        if (!drawing) return;
+        e.preventDefault();
+        const p = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        lastX = p.x; lastY = p.y;
+      };
+
+      const end = () => { drawing = false; };
+
+      canvas.addEventListener('mousedown', start);
+      canvas.addEventListener('mousemove', move);
+      canvas.addEventListener('mouseup', end);
+      canvas.addEventListener('mouseleave', end);
+
+      canvas.addEventListener('touchstart', start, { passive: false });
+      canvas.addEventListener('touchmove', move, { passive: false });
+      canvas.addEventListener('touchend', end, { passive: false });
+
+      // ปุ่มล้างกระดาน
+      const btnClear = document.getElementById('btnClearApprCanvas');
+      if (btnClear) {
+        btnClear.onclick = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          window._hasDrawnAppr = false;
+        };
+      }
+
+      // สลับแท็บวาด / อัปโหลด
+      const tabDraw = document.getElementById('tabApprDraw');
+      const tabUpload = document.getElementById('tabApprUpload');
+      const paneDraw = document.getElementById('paneApprDraw');
+      const paneUpload = document.getElementById('paneApprUpload');
+
+      if (tabDraw && tabUpload) {
+        tabDraw.onclick = () => {
+          paneDraw.style.display = 'block';
+          paneUpload.style.display = 'none';
+          tabDraw.className = 'px-2.5 py-1 rounded-md font-semibold bg-emerald-600 text-white shadow-sm transition';
+          tabUpload.className = 'px-2.5 py-1 rounded-md font-medium text-gray-600 hover:text-gray-900 transition';
+        };
+
+        tabUpload.onclick = () => {
+          paneDraw.style.display = 'none';
+          paneUpload.style.display = 'block';
+          tabUpload.className = 'px-2.5 py-1 rounded-md font-semibold bg-emerald-600 text-white shadow-sm transition';
+          tabDraw.className = 'px-2.5 py-1 rounded-md font-medium text-gray-600 hover:text-gray-900 transition';
+        };
+      }
+
+      // จัดการอัปโหลดไฟล์ภาพ
+      const fileInput = document.getElementById('apprSigFileInput');
+      const previewBox = document.getElementById('apprSigFilePreview');
+
+      if (fileInput) {
+        fileInput.onchange = e => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+              const processed = removeWhiteBackground(img);
+              window._apprUploadedSig = processed;
+              if (previewBox) {
+                previewBox.innerHTML = `<img src="${processed}" style="max-height:65px;max-width:180px;object-fit:contain" class="shadow-sm border rounded bg-white p-1">`;
+              }
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        };
+      }
+    },
     preConfirm: () => {
       if (!canSign) return;
-      if (!window._sigTemp) return Swal.showValidationMessage('กรุณาลงลายเซ็นก่อนกดยืนยัน');
-      const approve = document.querySelector('input[name="approve"]:checked').value;
-      const note = document.getElementById('approveNote').value;
-      return { approve, note, sig: window._sigTemp };
+      const approveEl = document.querySelector('input[name="apprChoice"]:checked');
+      const approve = approveEl ? approveEl.value : 'approve';
+      const note = document.getElementById('apprNoteText')?.value.trim() || '';
+
+      const paneUpload = document.getElementById('paneApprUpload');
+      const isUploadMode = paneUpload && paneUpload.style.display !== 'none';
+
+      let sig = null;
+      if (isUploadMode) {
+        sig = window._apprUploadedSig;
+        if (!sig) return Swal.showValidationMessage('กรุณาเลือกไฟล์รูปภาพลายเซ็น');
+      } else {
+        const canvas = document.getElementById('apprSigCanvas');
+        if (canvas) {
+          if (!window._hasDrawnAppr) {
+            return Swal.showValidationMessage('กรุณาวาดลายเซ็นก่อนกดยืนยัน');
+          }
+          const testData = canvas.toDataURL('image/png');
+          if (testData.length < 1000) {
+            return Swal.showValidationMessage('กรุณาวาดลายเซ็นก่อนกดยืนยัน');
+          }
+          sig = testData;
+        }
+      }
+
+      if (!sig) return Swal.showValidationMessage('กรุณาลงลายเซ็นก่อนกดยืนยัน');
+
+      return { approve, note, sig, activeRole };
     }
   }).then(r => {
-    if (r.isConfirmed && r.value) applyApproval(reqId, role, r.value);
+    if (r.isConfirmed && r.value) {
+      applyApproval(reqId, r.value.activeRole, r.value);
+    }
   });
 }
 
 async function applyApproval(reqId, role, { approve, note, sig }) {
-  Swal.fire({ title: 'กำลังบันทึกการอนุมัติและประมวลผล...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+  Swal.fire({
+    title: 'กำลังบันทึกการอนุมัติ...',
+    html: 'กำลังบันทึกลายเซ็นและอัปเดตขั้นตอนใน Google Sheet',
+    didOpen: () => Swal.showLoading(),
+    allowOutsideClick: false
+  });
+
   try {
-    const requests = DB.get('requests', []);
-    const req = requests.find(r => r.id === reqId);
-    if (!req) throw new Error('ไม่พบคำร้อง');
-
-    const sigUrl = await uploadSignature(sig, role + '_' + reqId);
-    const me = state.user;
-
-    if (role === 'teacher') {
-      req.teacherApproval = approve; req.teacherNote = note; req.teacherName = me.fullName;
-      req.signatures.teacher = sigUrl;
-      req.status = approve === 'approve' ? 'pending_eval' : 'rejected';
-    } else if (role === 'eval') {
-      req.evalApproval = approve; req.evalNote = note; req.evalName = me.fullName;
-      req.signatures.eval = sigUrl;
-      req.status = approve === 'approve' ? 'pending_deputy' : 'rejected';
-    } else if (role === 'deputy') {
-      req.deputyApproval = approve; req.deputyNote = note; req.deputyName = me.fullName;
-      req.signatures.deputy = sigUrl;
-      req.status = approve === 'approve' ? 'complete' : 'rejected';
-    }
-
-    const res = await apiCall('updateRequest', { request: req });
-    if (res.pdfUrl) req.pdfUrl = res.pdfUrl;
-    if (res.slideUrl) req.slideUrl = res.slideUrl;
+    const res = await apiCall('approveRequest', {
+      id: reqId,
+      reqId: reqId,
+      role: role,
+      approvalData: {
+        approve: approve,
+        note: note,
+        sig: sig,
+        approverName: state.user?.fullName || ''
+      },
+      approverUser: state.user
+    });
 
     await DB.load();
+
+    const roleName = ROLE_LABELS[role] || role;
+    const isApproved = approve === 'approve';
+    let msgHtml = `<p class="text-sm text-gray-600 mb-2">${isApproved ? 'บันทึกการพิจารณาอนุมัติเรียบร้อยแล้ว' : 'บันทึกการไม่อนุมัติเรียบร้อยแล้ว'}</p>`;
+
+    if (res.pdfUrl) {
+      msgHtml += `<div class="mt-3 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+        <p class="text-xs text-emerald-800 font-semibold mb-2">🎉 อนุมัติครบทุกขั้นตอนแล้ว (สร้างเอกสารทางการเสร็จสิ้น)</p>
+        <a href="${res.pdfUrl}" target="_blank" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 shadow-sm">
+          <i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF (Google Drive)
+        </a>
+      </div>`;
+    }
+
     Swal.fire({
-      icon: 'success',
-      title: 'บันทึกการอนุมัติเรียบร้อย',
-      html: req.pdfUrl ? `<p>สร้างเอกสาร PDF เสร็จแล้ว</p><a href="${req.pdfUrl}" target="_blank" class="mt-2 inline-block px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium">เปิดไฟล์ PDF</a>` : '',
+      icon: isApproved ? 'success' : 'info',
+      title: isApproved ? `อนุมัติสำเร็จ (${roleName})` : `ไม่อนุมัติ (${roleName})`,
+      html: msgHtml,
+      confirmButtonText: 'ตกลง',
       confirmButtonColor: state.theme.primary
     });
+
     renderApp();
   } catch (err) {
-    Swal.fire('เกิดข้อผิดพลาด', err.message, 'error');
+    console.error('applyApproval error:', err);
+    Swal.fire('เกิดข้อผิดพลาดในการบันทึก', err.message, 'error');
   }
 }
 
@@ -1174,7 +1431,7 @@ async function downloadPDF(reqId) {
 window.downloadPDF = downloadPDF;
 
 function buildFormHTML(r) {
-  const sig = (url, style = 'height:55px') => url ? `<img src="${url}" style="${style};object-fit:contain;display:block;margin:0 auto">` : '';
+  const sig = (url, style = 'height:55px') => url ? `<img src="${formatSigUrl(url)}" style="${style};object-fit:contain;display:block;margin:0 auto">` : '';
   const cb = (c, label) => `<span style="margin-right:12px">${c ? '☑' : '☐'} ${label}</span>`;
   const rows = (r.subjects || []).map(s => `<tr><td style="border:1px solid #000;padding:4px;text-align:center">${esc(s.order)}</td><td style="border:1px solid #000;padding:4px">${esc(s.code)}</td><td style="border:1px solid #000;padding:4px">${esc(s.name)}</td><td style="border:1px solid #000;padding:4px">${esc(s.time)}</td></tr>`).join('');
   return `
