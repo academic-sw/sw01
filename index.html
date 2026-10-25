@@ -35,7 +35,8 @@
   .app-icon{transition:.15s}
   .app-icon:active{transform:scale(.92)}
   .mobile-nav{display:none}
-  @media (max-width:1023px){.mobile-nav{display:flex}.sidebar-desktop{display:none}}
+  @media (max-width:1023px){.mobile-nav{display:flex}.sidebar-desktop{display:none!important}}
+  .sidebar-desktop.collapsed{transform:translateX(-100%);pointer-events:none}
   @media print{.no-print{display:none!important}}
   .swal2-popup{font-family:'Sarabun',sans-serif!important;border-radius:16px!important}
   .focus-primary:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px rgba(16,185,129,.15)}
@@ -45,6 +46,221 @@
 <div id="app"></div>
 
 <script>
+
+// ============================================================
+// ADMIN ACTIONS (แก้ไข & ลบคำร้อง)
+// ============================================================
+function openAdminEditRequest(reqId) {
+  const req = DB.get('requests', []).find(r => r.id === reqId);
+  if (!req) return;
+  const classes = DB.get('classes', []);
+  const curBE = getCurrentBE();
+
+  const classOptions = classes.map(c => 
+    `<option value="${c.id}" ${req.classId === c.id || req.className === c.name ? 'selected' : ''}>${esc(c.name)}</option>`
+  ).join('');
+
+  Swal.fire({
+    title: '<span style="font-size:1.15rem;font-weight:700">แก้ไขข้อมูลคำร้อง (Admin)</span>',
+    width: 'min(720px, 96vw)',
+    html: `
+      <div class="text-left text-xs space-y-3 max-h-[75vh] overflow-y-auto pr-1">
+        <div class="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 flex items-center gap-2">
+          <i class="fa-solid fa-triangle-exclamation text-amber-600 text-base"></i>
+          <span>แอดมินสามารถแก้ไขข้อมูลคำร้องและสถานะได้ เมื่อบันทึกระบบจะอัปเดตลง Google Sheets และปรับปรุงเอกสาร PDF อัตโนมัติ</span>
+        </div>
+
+        <div class="font-bold text-gray-800 border-b pb-1 text-sm"><i class="fa-solid fa-calendar mr-1 text-primary"></i> วันที่ยื่นคำร้อง & ภาคเรียน</div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">วัน</label>
+            <input id="ed_day" type="number" min="1" max="31" value="${esc(req.day || '')}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">เดือน</label>
+            <select id="ed_month" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+              ${THAI_MONTHS_FULL.map(m => `<option value="${m}" ${req.month === m ? 'selected' : ''}>${m}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">พุทธศักราช (พ.ศ.)</label>
+            <input id="ed_year" type="number" value="${esc(req.year || curBE)}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+        </div>
+
+        <div class="font-bold text-gray-800 border-b pb-1 text-sm pt-2"><i class="fa-solid fa-user-graduate mr-1 text-primary"></i> ข้อมูลนักเรียน</div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ชื่อจริง *</label>
+            <input id="ed_firstName" type="text" value="${esc(req.firstName || '')}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary" required>
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">นามสกุล *</label>
+            <input id="ed_lastName" type="text" value="${esc(req.lastName || '')}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary" required>
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ชั้นเรียน *</label>
+            <select id="ed_classId" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+              ${classOptions || `<option value="${esc(req.classId || '')}">${esc(req.className || 'ไม่ระบุ')}</option>`}
+            </select>
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">เบอร์โทรศัพท์</label>
+            <input id="ed_phone" type="tel" value="${esc(req.phone || '')}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ห้องสอบ</label>
+            <input id="ed_room" type="text" value="${esc(req.room || '')}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ตึก / อาคาร</label>
+            <input id="ed_building" type="text" value="${esc(req.building || '')}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+        </div>
+
+        <div class="font-bold text-gray-800 border-b pb-1 text-sm pt-2"><i class="fa-solid fa-pen-nib mr-1 text-primary"></i> ข้อมูลการสอบ</div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ประเภทการสอบ</label>
+            <select id="ed_examType" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+              <option value="สอบกลางภาค" ${req.examType === 'สอบกลางภาค' ? 'selected' : ''}>สอบกลางภาค</option>
+              <option value="สอบปลายภาค" ${req.examType === 'สอบปลายภาค' ? 'selected' : ''}>สอบปลายภาค</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ภาคเรียน</label>
+            <input id="ed_term" type="number" min="1" max="3" value="${esc(req.term || 1)}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+          <div>
+            <label class="font-semibold text-gray-700 block mb-1">ปีการศึกษา</label>
+            <input id="ed_academicYear" type="number" value="${esc(req.academicYear || curBE)}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+          </div>
+        </div>
+
+        <div>
+          <label class="font-semibold text-gray-700 block mb-1">สอบวันที่ (เช่น 14 ธันวาคม ${curBE})</label>
+          <input id="ed_examDate" type="text" value="${esc(formatThaiExamDate(req.examDate))}" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+        </div>
+
+        <div>
+          <label class="font-semibold text-gray-700 block mb-1">เนื่องจาก (เหตุผลที่ขอเข้าห้องสอบ)</label>
+          <textarea id="ed_reason" rows="2" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">${esc(req.reason || '')}</textarea>
+        </div>
+
+        <div class="font-bold text-gray-800 border-b pb-1 text-sm pt-2"><i class="fa-solid fa-shield-halved mr-1 text-primary"></i> สถานะคำร้องและการอนุมัติ</div>
+        <div>
+          <label class="font-semibold text-gray-700 block mb-1">สถานะคำร้อง</label>
+          <select id="ed_status" class="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 focus-primary">
+            <option value="pending_teacher" ${req.status === 'pending_teacher' ? 'selected' : ''}>รอครูที่ปรึกษาอนุมัติ (ขั้นที่ 2)</option>
+            <option value="pending_eval" ${req.status === 'pending_eval' ? 'selected' : ''}>รองานวัดและประเมินผลอนุมัติ (ขั้นที่ 3)</option>
+            <option value="pending_deputy" ${req.status === 'pending_deputy' ? 'selected' : ''}>รอรองผู้อำนวยการอนุมัติ (ขั้นที่ 4)</option>
+            <option value="complete" ${req.status === 'complete' ? 'selected' : ''}>🟢 อนุมัติครบถ้วนสมบูรณ์ (เสร็จสิ้น)</option>
+            <option value="rejected" ${req.status === 'rejected' ? 'selected' : ''}>🔴 ไม่อนุมัติ</option>
+          </select>
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '<i class="fa-solid fa-floppy-disk mr-1"></i> บันทึกการแก้ไข',
+    cancelButtonText: 'ยกเลิก',
+    confirmButtonColor: state.theme.primary,
+    preConfirm: () => {
+      const firstName = document.getElementById('ed_firstName')?.value.trim();
+      const lastName = document.getElementById('ed_lastName')?.value.trim();
+      if (!firstName || !lastName) {
+        Swal.showValidationMessage('กรุณากรอกชื่อและนามสกุลนักเรียน');
+        return false;
+      }
+      const classSelect = document.getElementById('ed_classId');
+      const selectedClassId = classSelect?.value || req.classId;
+      const selectedClassName = classSelect?.options[classSelect.selectedIndex]?.text || req.className;
+
+      return {
+        id: req.id,
+        day: document.getElementById('ed_day')?.value || req.day,
+        month: document.getElementById('ed_month')?.value || req.month,
+        year: document.getElementById('ed_year')?.value || req.year || curBE,
+        firstName,
+        lastName,
+        fullName: firstName + ' ' + lastName,
+        classId: selectedClassId,
+        className: selectedClassName,
+        phone: document.getElementById('ed_phone')?.value || '',
+        room: document.getElementById('ed_room')?.value || '',
+        building: document.getElementById('ed_building')?.value || '',
+        examType: document.getElementById('ed_examType')?.value || req.examType,
+        term: document.getElementById('ed_term')?.value || req.term,
+        academicYear: document.getElementById('ed_academicYear')?.value || req.academicYear || curBE,
+        examDate: document.getElementById('ed_examDate')?.value || req.examDate,
+        reason: document.getElementById('ed_reason')?.value || '',
+        status: document.getElementById('ed_status')?.value || req.status
+      };
+    }
+  }).then(async r => {
+    if (r.isConfirmed && r.value) {
+      Swal.fire({
+        title: 'กำลังบันทึกข้อมูล...',
+        html: 'กำลังอัปเดตลง Google Sheets และปรับปรุงเอกสาร PDF',
+        didOpen: () => Swal.showLoading(),
+        allowOutsideClick: false
+      });
+      try {
+        const updatePayload = { ...req, ...r.value };
+        const res = await apiCall('adminEditRequest', { request: updatePayload });
+        if (res && res.error) throw new Error(res.error);
+        await DB.load();
+        toast('success', 'บันทึกการแก้ไขคำร้องเรียบร้อยแล้ว');
+        renderApp();
+      } catch (err) {
+        Swal.fire({
+          icon: 'error',
+          title: 'บันทึกไม่สำเร็จ',
+          text: err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheets'
+        });
+      }
+    }
+  });
+}
+
+async function adminDeleteRequest(reqId) {
+  const req = DB.get('requests', []).find(r => r.id === reqId);
+  const studentName = req ? `${req.firstName} ${req.lastName}` : reqId;
+
+  const confirmRes = await Swal.fire({
+    title: 'ยืนยันลบคำร้อง?',
+    html: `คุณแน่ใจหรือไม่ว่าต้องการลบคำร้องของ <b>${esc(studentName)}</b>?<br><span class="text-xs text-red-500 font-medium">ข้อมูลจะถูกลบออกจาก Google Sheets ทั้งชีทหลักและชีทประจำชั้นอย่างถาวร</span>`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#ef4444',
+    cancelButtonColor: '#6b7280',
+    confirmButtonText: '<i class="fa-solid fa-trash mr-1"></i> ลบคำร้อง',
+    cancelButtonText: 'ยกเลิก'
+  });
+
+  if (!confirmRes.isConfirmed) return;
+
+  Swal.fire({
+    title: 'กำลังลบคำร้อง...',
+    html: 'กำลังลบข้อมูลออกจาก Google Sheets',
+    didOpen: () => Swal.showLoading(),
+    allowOutsideClick: false
+  });
+
+  try {
+    const res = await apiCall('delRequest', { id: reqId, reqId: reqId });
+    if (res && res.error) throw new Error(res.error);
+    await DB.load();
+    toast('success', 'ลบคำร้องเรียบร้อยแล้ว');
+    renderApp();
+  } catch (err) {
+    Swal.fire({
+      icon: 'error',
+      title: 'ลบคำร้องไม่สำเร็จ',
+      text: err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheets'
+    });
+  }
+}
+
 // ============================================================
 // 🔧 ตั้งค่า API URL (สำหรับการรันผ่าน GitHub Pages)
 // ============================================================
@@ -163,6 +379,7 @@ let state = {
   page: 'home',
   theme: { primary: '#10b981', secondary: '#fbbf24' },
   sidebarOpen: false,
+  sidebarCollapsed: false,
   loading: true,
   filterSem: '', filterClass: '', filterStatus: '', filterSearch: '',
   filterPageSize: 10, filterPage: 1
@@ -173,6 +390,14 @@ let state = {
 // ============================================================
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/**
+ * คำนวณปี พ.ศ. ปัจจุบันแบบไดนามิก เริ่มต้นจาก 2569 อัตโนมัติ (เช่น 2569, 2570, 2571...)
+ */
+function getCurrentBE() {
+  const currentAD = new Date().getFullYear();
+  return Math.max(2569, currentAD + 543);
+}
+
 const fmtDate = ts => {
   if (!ts) return '-';
   const d = new Date(ts);
@@ -315,16 +540,22 @@ function menuItems() {
 // LAYOUT COMPONENTS
 // ============================================================
 function renderSidebar() {
+  const collapsedClass = state.sidebarCollapsed ? 'collapsed -translate-x-full' : 'translate-x-0';
   return `
-  <aside class="sidebar-desktop fixed left-0 top-0 bottom-0 w-72 bg-white shadow-xl z-30 flex flex-col">
-    <div class="p-5 border-b border-gray-100 flex items-center gap-3">
-      <div class="w-11 h-11 rounded-xl flex items-center justify-center text-white shadow-lg" style="background:linear-gradient(135deg,var(--primary),var(--secondary))">
-        <i class="fa-solid fa-file-signature text-lg"></i>
+  <aside class="sidebar-desktop fixed left-0 top-0 bottom-0 w-72 bg-white shadow-xl z-30 flex flex-col transition-all duration-200 ${collapsedClass}">
+    <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-md flex-shrink-0" style="background:linear-gradient(135deg,var(--primary),var(--secondary))">
+          <i class="fa-solid fa-file-signature text-lg"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold text-gray-800 text-sm truncate">ระบบ สว.01</div>
+          <div class="text-[11px] text-gray-500 truncate">คำร้องขอเข้าห้องสอบ</div>
+        </div>
       </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-bold text-gray-800 text-sm truncate">ระบบ สว.01</div>
-        <div class="text-xs text-gray-500 truncate">คำร้องขอเข้าห้องสอบ</div>
-      </div>
+      <button data-action="toggle-sidebar" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition" title="ซ่อนแถบเมนู">
+        <i class="fa-solid fa-chevron-left text-sm"></i>
+      </button>
     </div>
     <div class="flex-1 overflow-y-auto p-3">
       ${renderMenuList()}
@@ -396,8 +627,10 @@ function renderMobileDrawer() {
 
 function renderTopBar() {
   return `
-  <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-gray-100 lg:px-6 px-4 py-3 flex items-center gap-3">
-    <button class="lg:hidden w-9 h-9 rounded-lg hover:bg-gray-100 flex items-center justify-center" data-action="open-sidebar"><i class="fa-solid fa-bars text-gray-700"></i></button>
+  <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-gray-100 px-4 lg:px-6 py-3 flex items-center gap-3">
+    <button class="w-9 h-9 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-700 transition" data-action="toggle-sidebar" title="ซ่อน/แสดงแถบเมนู">
+      <i class="fa-solid fa-bars text-lg"></i>
+    </button>
     <div class="flex-1 min-w-0">
       <div class="font-bold text-gray-800 truncate">${pageTitle(state.page)}</div>
       <div class="text-[11px] text-gray-500 truncate hidden sm:block">${pageSubtitle(state.page)}</div>
@@ -465,7 +698,7 @@ function renderApp() {
     document.getElementById('app').innerHTML = `
       ${renderSidebar()}
       ${renderMobileDrawer()}
-      <div class="lg:ml-72 min-h-screen">
+      <div class="${state.sidebarCollapsed ? 'ml-0' : 'lg:ml-72'} min-h-screen transition-all duration-200">
         ${renderTopBar()}
         <div class="p-4 lg:p-6 space-y-4">
           <div class="skeleton h-32"></div>
@@ -480,7 +713,7 @@ function renderApp() {
   document.getElementById('app').innerHTML = `
     ${renderSidebar()}
     ${renderMobileDrawer()}
-    <div class="lg:ml-72 min-h-screen">
+    <div class="${state.sidebarCollapsed ? 'ml-0' : 'lg:ml-72'} min-h-screen transition-all duration-200">
       ${renderTopBar()}
       <main class="p-4 lg:p-6 fade-in">${renderPage()}</main>
       <div class="h-16 lg:hidden"></div>
@@ -509,75 +742,37 @@ function renderPage() {
 
 // -------------------- HOME PAGE --------------------
 function renderHome() {
+  const curBE = getCurrentBE();
   const semesters = DB.get('semesters', []);
-  const current = semesters.find(s => s.current) || semesters[0];
-  const requests = DB.get('requests', []);
-  const semReq = current ? requests.filter(r => r.term == current.term && r.academicYear == current.year) : requests;
-  const complete = semReq.filter(r => r.status === 'complete').length;
-  const pending = semReq.filter(r => r.status !== 'complete' && r.status !== 'rejected').length;
-
-  const roleCard = (label, val, icon, color) => `
-    <div class="card card-hover p-4 sm:p-5 transition">
-      <div class="flex items-center justify-between mb-2">
-        <div class="w-10 h-10 rounded-xl flex items-center justify-center bg-${color}-100 text-${color}-600"><i class="fa-solid ${icon}"></i></div>
-      </div>
-      <div class="text-2xl sm:text-3xl font-bold text-gray-800">${val}</div>
-      <div class="text-xs text-gray-500 mt-1">${label}</div>
-    </div>`;
+  const current = semesters.find(s => s.current) || semesters[0] || { term: 1, year: curBE };
 
   return `
     <div class="space-y-5">
+      <!-- แบนเนอร์ภาคเรียนปัจจุบันและปุ่มทางลัด -->
       <div class="card p-5 lg:p-6 relative overflow-hidden" style="background:linear-gradient(135deg,var(--primary),var(--secondary))">
         <div class="relative z-10 text-white">
           <div class="text-xs font-medium opacity-90 mb-1"><i class="fa-solid fa-calendar-check mr-1"></i> ภาคเรียนปัจจุบัน</div>
-          <div class="text-2xl sm:text-3xl font-bold">ภาคเรียนที่ ${current?.term || '-'} / ปีการศึกษา ${current?.year || '-'}</div>
-          <div class="text-sm opacity-90 mt-1">ระบบคำร้องขอเข้าห้องสอบ (สว.01) — เชื่อมต่อ Google Sheets & Slides สำเร็จ</div>
+          <div class="text-2xl sm:text-3xl font-bold">ภาคเรียนที่ ${current?.term || '-'} / ปีการศึกษา ${current?.year || curBE}</div>
+          <div class="text-sm opacity-90 mt-1">ระบบคำร้องขอเข้าห้องสอบ (สว.01) — แดชบอร์ดและติดตามสถานะคำร้องแบบเรียลไทม์ เชื่อมโยง Google Sheets & Slides</div>
           <div class="mt-4 flex flex-wrap gap-2">
-            <button data-action="nav" data-page="student" class="bg-white/20 hover:bg-white/30 backdrop-blur px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"><i class="fa-solid fa-file-pen"></i> ยื่นคำร้องใหม่</button>
-            <button data-action="nav" data-page="requests-list" class="bg-white text-emerald-800 hover:bg-white/90 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow-sm"><i class="fa-solid fa-clipboard-list"></i> ดูรายการคำร้อง & ติดตามสถานะ</button>
-            ${isLoggedIn() ? `<button data-action="nav" data-page="${state.user.role === 'admin' ? 'admin-users' : state.user.role}" class="bg-white/20 hover:bg-white/30 backdrop-blur px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"><i class="fa-solid fa-gauge"></i> เข้าหน้าจัดการ</button>` : ''}
+            <button data-action="nav" data-page="student" class="bg-white/20 hover:bg-white/30 backdrop-blur px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition"><i class="fa-solid fa-file-pen"></i> ยื่นคำร้องใหม่</button>
+            <button data-action="nav" data-page="requests-list" class="bg-white text-emerald-800 hover:bg-white/90 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow-sm transition"><i class="fa-solid fa-clipboard-list"></i> ไปยังหน้ารายการคำร้อง</button>
+            ${isLoggedIn() ? `<button data-action="nav" data-page="${state.user.role === 'admin' ? 'admin-users' : state.user.role}" class="bg-white/20 hover:bg-white/30 backdrop-blur px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition"><i class="fa-solid fa-gauge"></i> เข้าหน้าจัดการ</button>` : ''}
           </div>
         </div>
         <div class="absolute -right-8 -bottom-8 text-white/10"><i class="fa-solid fa-file-signature" style="font-size:180px"></i></div>
       </div>
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        ${roleCard('คำร้องทั้งหมด', semReq.length, 'fa-file-lines', 'blue')}
-        ${roleCard('รอดำเนินการ', pending, 'fa-clock', 'amber')}
-        ${roleCard('เสร็จสิ้น (อนุมัติครบ)', complete, 'fa-circle-check', 'green')}
-        ${roleCard('ผู้ใช้งานในระบบ', DB.get('users', []).length, 'fa-users', 'purple')}
-      </div>
-      ${!isLoggedIn() ? `
-        <div class="card p-5 flex items-center gap-4">
-          <div class="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-lock text-xl"></i></div>
-          <div class="flex-1">
-            <div class="font-semibold text-gray-800">เข้าสู่ระบบเพื่อจัดการและลงนาม</div>
-            <div class="text-sm text-gray-500">ครูที่ปรึกษา / งานวัดและประเมินผล / รองผู้อำนวยการ / ผู้ดูแลระบบ</div>
-          </div>
-          <button data-action="open-login" class="btn-primary px-4 py-2 rounded-lg text-sm"><i class="fa-solid fa-right-to-bracket mr-1"></i> เข้าสู่ระบบ</button>
-        </div>` : ''}
-      <div class="card p-5">
-        <div class="font-semibold text-gray-800 mb-3"><i class="fa-solid fa-bolt text-amber-500 mr-1"></i> ทางลัดการใช้งาน</div>
-        <div class="grid grid-cols-4 sm:grid-cols-6 gap-3">
-          <button data-action="nav" data-page="student" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#10b981,#34d399)"><i class="fa-solid fa-file-pen"></i></div><span class="text-[10px] text-gray-600">ยื่นคำร้อง</span></button>
-          <button data-action="nav" data-page="requests-list" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#0284c7,#38bdf8)"><i class="fa-solid fa-clipboard-list"></i></div><span class="text-[10px] text-gray-600">ติดตามคำร้อง</span></button>
-          ${isLoggedIn() ? `
-          <button data-action="nav" data-page="teacher" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#3b82f6,#60a5fa)"><i class="fa-solid fa-chalkboard-user"></i></div><span class="text-[10px] text-gray-600">คิวครู</span></button>
-          <button data-action="nav" data-page="eval" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#f59e0b,#fbbf24)"><i class="fa-solid fa-clipboard-check"></i></div><span class="text-[10px] text-gray-600">งานวัดฯ</span></button>
-          <button data-action="nav" data-page="deputy" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#8b5cf6,#a78bfa)"><i class="fa-solid fa-user-tie"></i></div><span class="text-[10px] text-gray-600">รองฯ</span></button>
-          ` : ''}
-          ${hasRole('admin') ? `
-          <button data-action="nav" data-page="admin-users" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#ec4899,#f472b6)"><i class="fa-solid fa-users-gear"></i></div><span class="text-[10px] text-gray-600">ผู้ใช้</span></button>
-          <button data-action="nav" data-page="admin-classes" class="app-icon flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-gray-50"><div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow" style="background:linear-gradient(135deg,#06b6d4,#22d3ee)"><i class="fa-solid fa-school"></i></div><span class="text-[10px] text-gray-600">ชั้นเรียน</span></button>
-          ` : ''}
-        </div>
-      </div>
+
+      <!-- แสดงรายการคำร้องและสถานะข้อมูลเดียวกันกับหน้ารายการคำร้อง -->
+      ${renderRequestsList()}
     </div>`;
 }
 
 // -------------------- STUDENT FORM --------------------
 function renderStudent() {
   const semesters = DB.get('semesters', []);
-  const current = semesters.find(s => s.current) || semesters[0] || { term: 1, year: 2568 };
+  const curBE = getCurrentBE();
+  const current = semesters.find(s => s.current) || semesters[0] || { term: 1, year: curBE };
   const classes = DB.get('classes', []);
   const today = new Date();
 
@@ -645,12 +840,12 @@ function renderStudent() {
                 <option value="2" ${current.term == 2 ? 'selected' : ''}>2</option>
               </select></div>
             <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ปีการศึกษา</label>
-              <input name="academicYear" required type="number" value="${current.year}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
+              <input name="academicYear" required type="number" value="${current.year || curBE}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary"></div>
           </div>
           <div><label class="text-xs font-semibold text-gray-600 mb-1 block">เนื่องจาก</label>
             <textarea name="reason" required rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary" placeholder="ระบุเหตุผลการขอเข้าห้องสอบ"></textarea></div>
           <div><label class="text-xs font-semibold text-gray-600 mb-1 block">ซึ่งมีรายวิชาที่สอบของวันที่</label>
-            <input name="examDate" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary" placeholder="เช่น 15 มกราคม 2569"></div>
+            <input name="examDate" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary" placeholder="เช่น 15 มกราคม ${curBE}"></div>
 
           <div>
             <div class="flex items-center justify-between mb-2">
@@ -1039,9 +1234,19 @@ function renderRequestsList() {
           ${pdfBtn}
         </td>
         <td class="px-3.5 py-3 border-b border-gray-100 text-right whitespace-nowrap">
-          <button data-action="view-request" data-id="${r.id}" class="px-3 py-1.5 rounded-lg text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition" title="ดูรายละเอียดคำร้องและลายเซ็น">
-            <i class="fa-solid fa-eye mr-1"></i> ดูรายละเอียด
-          </button>
+          <div class="inline-flex items-center gap-1.5 justify-end">
+            <button data-action="view-request" data-id="${r.id}" class="px-2.5 py-1.5 rounded-lg text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition" title="ดูรายละเอียดคำร้องและลายเซ็น">
+              <i class="fa-solid fa-eye mr-1"></i> ดูรายละเอียด
+            </button>
+            ${hasRole('admin') ? `
+              <button data-action="admin-edit-req" data-id="${r.id}" class="px-2.5 py-1.5 rounded-lg text-xs bg-amber-500 hover:bg-amber-600 text-white font-semibold shadow-sm transition" title="แก้ไขคำร้อง (Admin)">
+                <i class="fa-solid fa-pen-to-square mr-1"></i> แก้ไข
+              </button>
+              <button data-action="admin-del-req" data-id="${r.id}" class="px-2.5 py-1.5 rounded-lg text-xs bg-red-600 hover:bg-red-700 text-white font-semibold shadow-sm transition" title="ลบคำร้อง (Admin)">
+                <i class="fa-solid fa-trash mr-1"></i> ลบ
+              </button>
+            ` : ''}
+          </div>
         </td>
       </tr>`;
   }).join('');
@@ -1113,7 +1318,7 @@ function renderRequestsList() {
               <th class="px-3.5 py-3">ประเภท</th>
               <th class="px-3.5 py-3">สถานะคำร้อง</th>
               <th class="px-3.5 py-3 text-center">เอกสาร PDF</th>
-              <th class="px-3.5 py-3 text-right">รายละเอียด</th>
+              <th class="px-3.5 py-3 text-right">การจัดการ</th>
             </tr>
           </thead>
           <tbody>
@@ -1401,6 +1606,17 @@ function openRequestDetail(reqId) {
           ${sigBox('งานวัดและประเมินผล', req.evalName, req.signatures?.eval, req.evalApproval, req.evalNote)}
           ${sigBox('รองผู้อำนวยการ', req.deputyName, req.signatures?.deputy, req.deputyApproval, req.deputyNote)}
         </div>
+
+        ${hasRole('admin') ? `
+          <div class="flex gap-2 pt-2 border-t border-gray-100">
+            <button onclick="Swal.close(); openAdminEditRequest('${req.id}')" class="flex-1 px-3 py-2 rounded-lg text-xs bg-amber-500 hover:bg-amber-600 text-white font-semibold flex items-center justify-center gap-1.5 shadow-sm transition">
+              <i class="fa-solid fa-pen-to-square"></i> แก้ไขคำร้อง (Admin)
+            </button>
+            <button onclick="Swal.close(); adminDeleteRequest('${req.id}')" class="flex-1 px-3 py-2 rounded-lg text-xs bg-red-600 hover:bg-red-700 text-white font-semibold flex items-center justify-center gap-1.5 shadow-sm transition">
+              <i class="fa-solid fa-trash"></i> ลบคำร้อง (Admin)
+            </button>
+          </div>
+        ` : ''}
 
         ${(req.status === 'complete' || req.status === 'rejected') ? `
           <div class="pt-2">
@@ -1749,8 +1965,19 @@ document.addEventListener('click', async e => {
   const id = el.dataset.id;
 
   if (action === 'nav') { e.preventDefault(); navigate(el.dataset.page); return; }
+  if (action === 'toggle-sidebar') {
+    if (window.innerWidth < 1024) {
+      state.sidebarOpen = !state.sidebarOpen;
+    } else {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+    }
+    renderApp();
+    return;
+  }
   if (action === 'open-sidebar') { state.sidebarOpen = true; renderApp(); return; }
   if (action === 'close-sidebar') { state.sidebarOpen = false; renderApp(); return; }
+  if (action === 'admin-edit-req') { openAdminEditRequest(id); return; }
+  if (action === 'admin-del-req') { adminDeleteRequest(id); return; }
   if (action === 'open-login') { openLoginModal(); return; }
   if (action === 'refresh') {
     state.loading = true; renderApp();
@@ -2043,7 +2270,7 @@ function openSemForm() {
         </div>
         <div>
           <label class="text-xs font-semibold text-gray-700 block mb-1">ปีการศึกษา (พ.ศ.)</label>
-          <input id="sf_year" type="number" placeholder="เช่น 2568" value="2568" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
+          <input id="sf_year" type="number" placeholder="เช่น ${getCurrentBE()}" value="${getCurrentBE()}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus-primary">
         </div>
       </div>
     `,
@@ -2278,6 +2505,9 @@ window.login = login;
 window.logout = logout;
 window.renderApp = renderApp;
 window.renderRequestsList = renderRequestsList;
+window.getCurrentBE = getCurrentBE;
+window.openAdminEditRequest = openAdminEditRequest;
+window.adminDeleteRequest = adminDeleteRequest;
 
 // ============================================================
 // BIND PAGE EVENTS
