@@ -940,12 +940,12 @@ function renderRequestsList() {
       if (r.pdfUrl) {
         pdfBtn = `
           <a href="${r.pdfUrl}" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow transition">
-            <i class="fa-solid fa-file-pdf"></i> ดาวน์โหลด PDF
+            <i class="fa-solid fa-file-pdf"></i> เอกสาร PDF
           </a>`;
       } else {
         pdfBtn = `
-          <button onclick="downloadPDF('${r.id}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium transition">
-            <i class="fa-solid fa-file-arrow-down"></i> สร้าง PDF
+          <button onclick="openOfficialPDF('${r.id}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow transition">
+            <i class="fa-solid fa-file-pdf"></i> สร้างเอกสาร PDF
           </button>`;
       }
     } else if (r.status === 'rejected') {
@@ -1308,9 +1308,16 @@ function openRequestDetail(reqId) {
         </div>
 
         ${req.status === 'complete' ? `
-          <div class="pt-2 space-y-2">
-            ${req.pdfUrl ? `<a href="${req.pdfUrl}" target="_blank" class="w-full btn-primary py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm"><i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF ทางการ (Google Drive)</a>` : ''}
-            <button onclick="downloadPDF('${req.id}')" class="w-full border border-gray-300 hover:bg-gray-50 py-2 rounded-lg text-xs font-medium text-gray-700 flex items-center justify-center gap-2"><i class="fa-solid fa-file-arrow-down"></i> ดาวน์โหลด PDF สำรอง (Browser)</button>
+          <div class="pt-2">
+            ${req.pdfUrl ? `
+              <a href="${req.pdfUrl}" target="_blank" class="w-full btn-primary py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
+                <i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF ทางการ (Google Drive)
+              </a>
+            ` : `
+              <button onclick="openOfficialPDF('${req.id}')" class="w-full btn-primary py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
+                <i class="fa-solid fa-file-pdf"></i> จัดทำและเปิดเอกสาร PDF ทางการ
+              </button>
+            `}
           </div>
         ` : ''}
 
@@ -1583,61 +1590,69 @@ async function applyApproval(reqId, role, { approve, note, sig }) {
 }
 
 // ============================================================
-// PDF GENERATION (Browser fallback)
+// เอกสารทางการ PDF (สร้างจาก Google Slide Template เท่านั้น)
 // ============================================================
-async function downloadPDF(reqId) {
+async function openOfficialPDF(reqId) {
   const req = DB.get('requests', []).find(r => r.id === reqId);
   if (!req) return;
-  Swal.fire({ title: 'กำลังสร้าง PDF...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+
+  // 1. ถ้ามี URL เอกสาร PDF ทางการใน Google Drive แล้ว ให้เปิดทันที
+  if (req.pdfUrl) {
+    window.open(req.pdfUrl, '_blank');
+    return;
+  }
+
+  // 2. ถ้าคำร้องไม่อนุมัติ
+  if (req.status === 'rejected') {
+    Swal.fire({
+      icon: 'error',
+      title: 'คำร้องนี้ไม่ได้รับการอนุมัติ',
+      text: 'ไม่สามารถออกเอกสารคำร้องทางการได้ เนื่องจากมีผู้พิจารณาไม่อนุมัติ'
+    });
+    return;
+  }
+
+  // 3. ถ้ายังอยู่ระหว่างการพิจารณา
+  if (req.status !== 'complete') {
+    Swal.fire({
+      icon: 'info',
+      title: 'อยู่ระหว่างดำเนินการ',
+      text: 'เอกสารคำร้องทางการจะออกให้เมื่อครูที่ปรึกษา, งานวัดผล และรองผู้อำนวยการอนุมัติและลงนามครบถ้วน'
+    });
+    return;
+  }
+
+  // 4. ถ้าอนุมัติครบแล้วแต่ยังไม่มี PDF ให้สั่งระบบ Backend สร้างจาก Google Slide Template
+  Swal.fire({
+    title: 'กำลังจัดทำเอกสาร PDF ทางการ...',
+    html: 'ระบบกำลังดึงข้อมูลลงใน Google Slide Template และบันทึกลง Google Drive<br>กรุณารอสักครู่...',
+    didOpen: () => Swal.showLoading(),
+    allowOutsideClick: false
+  });
+
   try {
-    const wrap = document.createElement('div');
-    wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;padding:40px;background:white;font-family:Sarabun,sans-serif;color:#000';
-    wrap.innerHTML = buildFormHTML(req);
-    document.body.appendChild(wrap);
-    const canvas = await html2canvas(wrap, { scale: 2, useCORS: true, backgroundColor: '#fff' });
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const w = 210, h = (canvas.height * w) / canvas.width;
-    const img = canvas.toDataURL('image/png');
-    if (h > 297) {
-      let posY = 0;
-      const pageH = canvas.width * 297 / 210;
-      while (posY < canvas.height) {
-        const sh = Math.min(pageH, canvas.height - posY);
-        const tmp = document.createElement('canvas');
-        tmp.width = canvas.width; tmp.height = sh;
-        tmp.getContext('2d').drawImage(canvas, 0, posY, canvas.width, sh, 0, 0, canvas.width, sh);
-        if (posY > 0) pdf.addPage();
-        pdf.addImage(tmp.toDataURL('image/png'), 'PNG', 0, 0, w, (sh * w) / canvas.width);
-        posY += sh;
+    const res = await backend('generateOfficialPDF', { id: reqId });
+    if (res && res.pdfUrl) {
+      req.pdfUrl = res.pdfUrl;
+      req.slideUrl = res.slideUrl;
+      const all = DB.get('requests', []);
+      const idx = all.findIndex(x => x.id === reqId);
+      if (idx !== -1) {
+        all[idx] = req;
+        DB.set('requests', all);
       }
+      Swal.close();
+      window.open(res.pdfUrl, '_blank');
+      render();
     } else {
-      pdf.addImage(img, 'PNG', 0, 0, w, h);
+      throw new Error(res?.error || 'ไม่สามารถสร้างเอกสาร PDF ได้');
     }
-    pdf.save(`สว01_${req.firstName}_${req.lastName}.pdf`);
-    document.body.removeChild(wrap);
-    Swal.close();
-    toast('success', 'ดาวน์โหลดเอกสาร PDF สำเร็จ');
-  } catch (e) {
-    Swal.fire('ข้อผิดพลาด', e.message, 'error');
+  } catch (err) {
+    Swal.fire('เกิดข้อผิดพลาด', err.message, 'error');
   }
 }
-window.downloadPDF = downloadPDF;
-
-function buildFormHTML(r) {
-  const sig = (url, style = 'height:55px') => url ? `<img src="${formatSigUrl(url)}" style="${style};object-fit:contain;display:block;margin:0 auto">` : '';
-  const cb = (c, label) => `<span style="margin-right:12px">${c ? '☑' : '☐'} ${label}</span>`;
-  const rows = (r.subjects || []).map(s => `<tr><td style="border:1px solid #000;padding:4px;text-align:center">${esc(s.order)}</td><td style="border:1px solid #000;padding:4px">${esc(s.code)}</td><td style="border:1px solid #000;padding:4px">${esc(s.name)}</td><td style="border:1px solid #000;padding:4px">${esc(s.time)}</td></tr>`).join('');
-  return `
-    <div style="text-align:center;margin-bottom:10px"><div style="font-size:20px;font-weight:bold">แบบคำร้องขอเข้าห้องสอบ</div><div style="font-size:14px">(สว. 01)</div></div>
-    <div style="margin-bottom:8px;font-size:14px">วันที่ ${esc(r.day)} ${esc(r.month)} พ.ศ. ${esc(r.year)}<br>เรื่อง ขอเข้าห้องสอบ<br>เรียน ผู้อำนวยการโรงเรียนบ้านหมอ "พัฒนานุกูล"</div>
-    <div style="font-size:14px;line-height:1.7;text-indent:30px;margin-bottom:8px">ด้วยข้าพเจ้า <b>${esc(r.firstName)} ${esc(r.lastName)}</b> ชั้น <b>${esc(r.className)}</b> ห้องสอบ <b>${esc(r.room)}</b> ตึก/อาคาร <b>${esc(r.building)}</b> เบอร์โทร <b>${esc(r.phone)}</b> มีความประสงค์ขอเข้าห้องสอบ ${cb(r.examType === 'กลางภาค', 'กลางภาค')}${cb(r.examType === 'ปลายภาค', 'ปลายภาค')} ภาคเรียนที่ <b>${esc(r.term)}</b> ปีการศึกษา <b>${esc(r.academicYear)}</b> เนื่องจาก <b>${esc(r.reason)}</b> ซึ่งมีรายวิชาที่สอบของวันที่ <b>${esc(r.examDate)}</b> ดังนี้</div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:15px"><thead><tr style="background:#f0f0f0"><th style="border:1px solid #000;padding:5px;width:60px">ลำดับ</th><th style="border:1px solid #000;padding:5px">รหัสวิชา</th><th style="border:1px solid #000;padding:5px">ชื่อวิชา</th><th style="border:1px solid #000;padding:5px">เวลาสอบ</th></tr></thead><tbody>${rows}</tbody></table>
-    <div style="text-align:right;font-size:14px;margin-bottom:15px;padding-right:20px">ลงชื่อ ${sig(r.signatures?.student, 'height:50px')}<div style="margin-top:4px">( ${esc(r.firstName)} ${esc(r.lastName)} )</div><div>นักเรียน</div></div>
-    <div style="border:1px solid #000;padding:10px;font-size:13px;margin-bottom:10px"><b>ความเห็นครูที่ปรึกษา</b><br>${cb(r.teacherApproval === 'approve', 'เห็นควรอนุญาต')} ${cb(r.teacherApproval === 'reject', 'ไม่เห็นควร')}${r.teacherNote ? `<div>หมายเหตุ: ${esc(r.teacherNote)}</div>` : ''}<div style="text-align:right;margin-top:6px">ลงชื่อ ${sig(r.signatures?.teacher, 'height:45px')}<div>( ${esc(r.teacherName || '........................')} )</div><div>ครูที่ปรึกษา</div></div></div>
-    <div style="border:1px solid #000;padding:10px;font-size:13px;margin-bottom:10px"><b>ความเห็นงานวัดและประเมินผล</b><br>${cb(r.evalApproval === 'approve', 'เห็นควรอนุญาต')} ${cb(r.evalApproval === 'reject', 'ไม่เห็นควร')}${r.evalNote ? `<div>หมายเหตุ: ${esc(r.evalNote)}</div>` : ''}<div style="text-align:right;margin-top:6px">ลงชื่อ ${sig(r.signatures?.eval, 'height:45px')}<div>( ${esc(r.evalName || '........................')} )</div><div>งานวัดและประเมินผล</div></div></div>
-    <div style="border:1px solid #000;padding:10px;font-size:13px"><b>ความเห็นรองผู้อำนวยการงานบริหารวิชาการ</b><br>${cb(r.deputyApproval === 'approve', 'เห็นควรอนุญาต')} ${cb(r.deputyApproval === 'reject', 'ไม่เห็นควร')}${r.deputyNote ? `<div>หมายเหตุ: ${esc(r.deputyNote)}</div>` : ''}<div style="text-align:right;margin-top:6px">ลงชื่อ ${sig(r.signatures?.deputy, 'height:45px')}<div>( ${esc(r.deputyName || '........................')} )</div><div>รองผู้อำนวยการงานบริหารวิชาการ</div></div></div>`;
-}
+window.openOfficialPDF = openOfficialPDF;
+window.downloadPDF = openOfficialPDF;
 
 // ============================================================
 // EVENT LISTENERS
@@ -2131,7 +2146,8 @@ window.openSemForm = openSemForm;
 window.openLoginModal = openLoginModal;
 window.openRequestDetail = openRequestDetail;
 window.openSignatureModal = openSignatureModal;
-window.downloadPDF = downloadPDF;
+window.openOfficialPDF = openOfficialPDF;
+window.downloadPDF = openOfficialPDF;
 window.navigate = navigate;
 window.login = login;
 window.logout = logout;
