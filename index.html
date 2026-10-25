@@ -102,6 +102,8 @@ async function apiCall(action, params = {}) {
       else if (action === 'uploadFile') runner.uploadFile(params.base64, params.filename, params.mimeType);
       else if (action === 'saveRequest') runner.saveStudentRequest(params.request);
       else if (action === 'updateRequest') runner.updateRequestRow(params.request);
+      else if (action === 'adminEditRequest') runner.updateRequestRow(params.request || params);
+      else if (action === 'delRequest' || action === 'deleteRequest') runner.deleteRequest(params.id || params.reqId);
       else if (action === 'approveRequest') runner.approveRequest(params.id, params.role, params.approvalData || params, state.user);
       else if (action === 'generateOfficialPDF') runner.generateOfficialPDF(params.id || params.reqId);
       else if (action === 'saveUser') runner.manageUser(params.isEdit ? 'edit' : 'add', params.user);
