@@ -176,6 +176,44 @@ const fmtDate = ts => {
   const d = new Date(ts);
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 };
+
+const THAI_MONTHS_FULL = [
+  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+];
+
+/**
+ * แปลงวันที่สอบให้อยู่ในรูปแบบภาษาไทย เช่น 14 ธันวาคม 2569
+ */
+function formatThaiExamDate(val) {
+  if (!val) return '-';
+  const str = String(val).trim();
+  if (!str) return '-';
+
+  // รูปแบบ ISO หรือ YYYY-MM-DD เช่น 2569-12-14T17:00:00.000Z หรือ 2026-12-14
+  const match = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (match) {
+    let year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    const day = parseInt(match[3], 10);
+    if (year < 2400) year += 543;
+    const monthName = THAI_MONTHS_FULL[month - 1] || match[2];
+    return `${day} ${monthName} ${year}`;
+  }
+
+  // รูปแบบ DD/MM/YYYY
+  const matchSlash = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (matchSlash) {
+    const day = parseInt(matchSlash[1], 10);
+    const month = parseInt(matchSlash[2], 10);
+    let year = parseInt(matchSlash[3], 10);
+    if (year < 2400) year += 543;
+    const monthName = THAI_MONTHS_FULL[month - 1] || matchSlash[2];
+    return `${day} ${monthName} ${year}`;
+  }
+
+  return str;
+}
 const toast = (icon, title) => Swal.fire({ icon, title, toast: true, position: 'top-end', showConfirmButton: false, timer: 2000, timerProgressBar: true });
 
 function shade(hex, pct) {
@@ -956,7 +994,17 @@ function renderRequestsList() {
       }
     } else if (r.status === 'rejected') {
       statusBadge = `<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-300 shadow-sm"><i class="fa-solid fa-circle-xmark text-red-600"></i> ไม่อนุมัติ</span>`;
-      pdfBtn = `<span class="text-xs text-red-600 font-semibold px-2.5 py-1 bg-red-50 rounded-lg border border-red-200">ไม่อนุมัติ</span>`;
+      if (r.pdfUrl) {
+        pdfBtn = `
+          <a href="${r.pdfUrl}" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow transition">
+            <i class="fa-solid fa-file-pdf"></i> เอกสาร PDF
+          </a>`;
+      } else {
+        pdfBtn = `
+          <button onclick="openOfficialPDF('${r.id}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow transition">
+            <i class="fa-solid fa-file-pdf"></i> สร้างเอกสาร PDF
+          </button>`;
+      }
     } else {
       const stageText = r.status === 'pending_teacher' ? 'รอครูที่ปรึกษา (ขั้นที่ 2)' :
                         r.status === 'pending_eval' ? 'รองานวัดผล (ขั้นที่ 3)' :
@@ -973,7 +1021,7 @@ function renderRequestsList() {
         </td>
         <td class="px-3.5 py-3 border-b border-gray-100">
           <div class="font-bold text-gray-900 text-sm">${esc(r.firstName)} ${esc(r.lastName)}</div>
-          <div class="text-[11px] text-gray-500">สอบวันที่: ${esc(r.examDate || '-')}</div>
+          <div class="text-[11px] text-gray-500">สอบวันที่: ${esc(formatThaiExamDate(r.examDate))}</div>
         </td>
         <td class="px-3.5 py-3 border-b border-gray-100 whitespace-nowrap">
           <span class="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-200">${esc(r.className)}</span>
@@ -1334,7 +1382,7 @@ function openRequestDetail(reqId) {
           <div><b>ประเภท:</b> ${esc(req.examType)}</div>
           <div><b>ภ./ปี:</b> ${esc(req.term)}/${esc(req.academicYear)}</div>
           <div><b>วันที่ยื่น:</b> ${fmtDate(req.createdAt)}</div>
-          <div class="col-span-2"><b>สอบวันที่:</b> ${esc(req.examDate)}</div>
+          <div class="col-span-2"><b>สอบวันที่:</b> ${esc(formatThaiExamDate(req.examDate))}</div>
           <div class="col-span-2"><b>เนื่องจาก:</b> ${esc(req.reason)}</div>
         </div>
 
@@ -1352,15 +1400,15 @@ function openRequestDetail(reqId) {
           ${sigBox('รองผู้อำนวยการ', req.deputyName, req.signatures?.deputy, req.deputyApproval, req.deputyNote)}
         </div>
 
-        ${req.status === 'complete' ? `
+        ${(req.status === 'complete' || req.status === 'rejected') ? `
           <div class="pt-2">
             ${req.pdfUrl ? `
-              <a href="${req.pdfUrl}" target="_blank" class="w-full btn-primary py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
-                <i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF ทางการ (Google Drive)
+              <a href="${req.pdfUrl}" target="_blank" class="w-full ${req.status === 'rejected' ? 'bg-red-600 hover:bg-red-700' : 'btn-primary'} text-white py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm transition">
+                <i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF ทางการ ${req.status === 'rejected' ? '(ไม่อนุมัติ)' : ''} (Google Drive)
               </a>
             ` : `
-              <button onclick="openOfficialPDF('${req.id}')" class="w-full btn-primary py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
-                <i class="fa-solid fa-file-pdf"></i> จัดทำและเปิดเอกสาร PDF ทางการ
+              <button onclick="openOfficialPDF('${req.id}')" class="w-full ${req.status === 'rejected' ? 'bg-red-600 hover:bg-red-700' : 'btn-primary'} text-white py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm transition">
+                <i class="fa-solid fa-file-pdf"></i> จัดทำและเปิดเอกสาร PDF ทางการ ${req.status === 'rejected' ? '(ไม่อนุมัติ)' : ''}
               </button>
             `}
           </div>
@@ -1611,9 +1659,9 @@ async function applyApproval(reqId, role, { approve, note, sig }) {
     let msgHtml = `<p class="text-sm text-gray-600 mb-2">${isApproved ? 'บันทึกการพิจารณาอนุมัติเรียบร้อยแล้ว' : 'บันทึกการไม่อนุมัติเรียบร้อยแล้ว'}</p>`;
 
     if (res.pdfUrl) {
-      msgHtml += `<div class="mt-3 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-        <p class="text-xs text-emerald-800 font-semibold mb-2">🎉 อนุมัติครบทุกขั้นตอนแล้ว (สร้างเอกสารทางการเสร็จสิ้น)</p>
-        <a href="${res.pdfUrl}" target="_blank" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 shadow-sm">
+      msgHtml += `<div class="mt-3 p-3 ${isApproved ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'} rounded-lg border">
+        <p class="text-xs ${isApproved ? 'text-emerald-800' : 'text-red-800'} font-semibold mb-2">${isApproved ? '🎉 อนุมัติครบทุกขั้นตอนแล้ว (สร้างเอกสารทางการเสร็จสิ้น)' : '⚠️ บันทึกผลการไม่อนุมัติและจัดทำเอกสาร PDF เรียบร้อยแล้ว'}</p>
+        <a href="${res.pdfUrl}" target="_blank" class="inline-flex items-center gap-1.5 px-4 py-2 ${isApproved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'} text-white rounded-lg text-xs font-semibold shadow-sm transition">
           <i class="fa-solid fa-file-pdf"></i> เปิดเอกสาร PDF (Google Drive)
         </a>
       </div>`;
@@ -1647,22 +1695,12 @@ async function openOfficialPDF(reqId) {
     return;
   }
 
-  // 2. ถ้าคำร้องไม่อนุมัติ
-  if (req.status === 'rejected') {
-    Swal.fire({
-      icon: 'error',
-      title: 'คำร้องนี้ไม่ได้รับการอนุมัติ',
-      text: 'ไม่สามารถออกเอกสารคำร้องทางการได้ เนื่องจากมีผู้พิจารณาไม่อนุมัติ'
-    });
-    return;
-  }
-
-  // 3. ถ้ายังอยู่ระหว่างการพิจารณา
-  if (req.status !== 'complete') {
+  // 2. ถ้ายังอยู่ระหว่างการพิจารณา (ยังไม่เสร็จสิ้นและยังไม่มีผู้พิจารณาไม่อนุมัติ)
+  if (req.status !== 'complete' && req.status !== 'rejected') {
     Swal.fire({
       icon: 'info',
       title: 'อยู่ระหว่างดำเนินการ',
-      text: 'เอกสารคำร้องทางการจะออกให้เมื่อครูที่ปรึกษา, งานวัดผล และรองผู้อำนวยการอนุมัติและลงนามครบถ้วน'
+      text: 'เอกสารคำร้องทางการจะออกให้เมื่อได้รับการพิจารณาและลงนามในระบบ'
     });
     return;
   }
@@ -1851,15 +1889,33 @@ document.addEventListener('click', async e => {
 });
 
 // ============================================================
-// LOGIN MODAL
+// LOGIN MODAL (พร้อมตัวเลือกจดจำ Username และ Password)
 // ============================================================
 function openLoginModal() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem('sv01_remember') || 'null');
+  } catch (e) {}
+
   Swal.fire({
-    title: 'เข้าสู่ระบบ',
+    title: '<span class="text-lg font-bold text-gray-800">เข้าสู่ระบบเจ้าหน้าที่ / ครู</span>',
     html: `
-      <input id="loginUser" placeholder="Username" class="swal2-input" autocomplete="username">
-      <input id="loginPass" type="password" placeholder="Password" class="swal2-input" autocomplete="current-password">
+      <div class="space-y-3.5 text-left pt-2 px-1">
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">ชื่อผู้ใช้ (Username)</label>
+          <input id="loginUser" value="${saved?.username ? esc(saved.username) : ''}" placeholder="ระบุชื่อผู้ใช้ เช่น admin, teacher, eval, deputy" class="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono" autocomplete="username">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">รหัสผ่าน (Password)</label>
+          <input id="loginPass" type="password" value="${saved?.password ? esc(saved.password) : ''}" placeholder="ระบุรหัสผ่าน" class="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" autocomplete="current-password">
+        </div>
+        <div class="flex items-center gap-2 pt-1">
+          <input type="checkbox" id="rememberMe" ${saved?.remember ? 'checked' : ''} class="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500 cursor-pointer">
+          <label for="rememberMe" class="text-xs text-gray-700 font-medium cursor-pointer select-none">จดจำ Username และ Password ในเครื่องนี้</label>
+        </div>
+      </div>
     `,
+    width: '420px',
     confirmButtonText: 'เข้าสู่ระบบ',
     cancelButtonText: 'ยกเลิก',
     showCancelButton: true,
@@ -1867,8 +1923,28 @@ function openLoginModal() {
     preConfirm: () => {
       const u = document.getElementById('loginUser').value.trim();
       const p = document.getElementById('loginPass').value;
-      if (!u || !p) { Swal.showValidationMessage('กรุณากรอกข้อมูลให้ครบ'); return false; }
-      if (!login(u, p)) { Swal.showValidationMessage('Username หรือ Password ไม่ถูกต้อง'); return false; }
+      const rem = document.getElementById('rememberMe').checked;
+
+      if (!u || !p) {
+        Swal.showValidationMessage('กรุณากรอก Username และ Password ให้ครบถ้วน');
+        return false;
+      }
+      if (!login(u, p)) {
+        Swal.showValidationMessage('Username หรือ Password ไม่ถูกต้อง');
+        return false;
+      }
+
+      // บันทึกหรือลบข้อมูลการจดจำ
+      if (rem) {
+        try {
+          localStorage.setItem('sv01_remember', JSON.stringify({ username: u, password: p, remember: true }));
+        } catch (e) {}
+      } else {
+        try {
+          localStorage.removeItem('sv01_remember');
+        } catch (e) {}
+      }
+
       return true;
     }
   }).then(r => {
