@@ -103,6 +103,7 @@ async function apiCall(action, params = {}) {
       else if (action === 'saveRequest') runner.saveStudentRequest(params.request);
       else if (action === 'updateRequest') runner.updateRequestRow(params.request);
       else if (action === 'approveRequest') runner.approveRequest(params.id, params.role, params.approvalData || params, state.user);
+      else if (action === 'generateOfficialPDF') runner.generateOfficialPDF(params.id || params.reqId);
       else if (action === 'saveUser') runner.manageUser(params.isEdit ? 'edit' : 'add', params.user);
       else if (action === 'delUser') runner.manageUser('delete', { id: params.id });
       else if (action === 'resetDefaultUsers') runner.resetDefaultUsers();
@@ -132,6 +133,11 @@ async function apiCall(action, params = {}) {
 
   throw new Error('กรุณาตั้งค่า API_URL ใน index.html หรือเปิดใช้งานผ่าน Google Apps Script Web App');
 }
+
+// ผูกฟังก์ชันเรียก API ให้ใช้ได้ทั้งชื่อ apiCall และ backend
+const backend = apiCall;
+window.backend = apiCall;
+window.apiCall = apiCall;
 
 async function uploadSignature(dataUrl, tag = 'sig') {
   if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
@@ -1631,7 +1637,7 @@ async function openOfficialPDF(reqId) {
   });
 
   try {
-    const res = await backend('generateOfficialPDF', { id: reqId });
+    const res = await apiCall('generateOfficialPDF', { id: reqId });
     if (res && res.pdfUrl) {
       req.pdfUrl = res.pdfUrl;
       req.slideUrl = res.slideUrl;
@@ -2148,6 +2154,8 @@ window.openRequestDetail = openRequestDetail;
 window.openSignatureModal = openSignatureModal;
 window.openOfficialPDF = openOfficialPDF;
 window.downloadPDF = openOfficialPDF;
+window.apiCall = apiCall;
+window.backend = apiCall;
 window.navigate = navigate;
 window.login = login;
 window.logout = logout;
