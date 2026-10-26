@@ -1449,9 +1449,9 @@ function openSignatureModal(target) {
 // ============================================================
 // SIGNATURE: Normalize ให้ขนาดคงที่ + ตำแหน่งเดิมทุกครั้ง
 // ============================================================
-const SIG_NORM_W = 320;   // ความกว้างมาตรฐาน (px)
-const SIG_NORM_H = 100;   // ความสูงมาตรฐาน (px)
-const SIG_NORM_PAD = 8;   // ระยะขอบภายใน (px)
+const SIG_NORM_W = 160;   // ความกว้างมาตรฐาน (px)
+const SIG_NORM_H = 50;   // ความสูงมาตรฐาน (px)
+const SIG_NORM_PAD = 4;   // ระยะขอบภายใน (px)
 
 /**
  * cropSignatureCanvas(c, targetW, targetH)
@@ -1598,8 +1598,8 @@ function openRequestDetail(reqId) {
           <span>${label}</span>
           ${approval ? `<span class="text-[11px] font-bold ${approval === 'approve' ? 'text-emerald-600' : 'text-red-600'}">${approval === 'approve' ? '✓ เห็นควร' : '✗ ไม่เห็นควร'}</span>` : ''}
         </div>
-        <div class="h-12 flex items-center justify-center bg-white rounded-lg border border-dashed border-gray-200 p-1">
-          ${imgUrl ? `<img src="${imgUrl}" alt="ลายเซ็น${label}" class="max-h-10 max-w-[120px] object-contain" onerror="if(this.dataset.fb!='1'){this.dataset.fb='1';this.src='https://drive.google.com/thumbnail?id=${fileId}&sz=w500';}else{this.parentElement.innerHTML='<span class=\\'text-[11px] text-gray-400\\'>มีลายเซ็นในระบบ</span>';}">` : '<span class="text-xs text-gray-400">— ยังไม่ลงนาม —</span>'}
+        <div class="h-10 flex items-center justify-center bg-white rounded-lg border border-dashed border-gray-200 p-1">
+          ${imgUrl ? `<img src="${imgUrl}" alt="ลายเซ็น${label}" class="max-h-8 max-w-[120px] object-contain" onerror="if(this.dataset.fb!='1'){this.dataset.fb='1';this.src='https://drive.google.com/thumbnail?id=${fileId}&sz=w500';}else{this.parentElement.innerHTML='<span class=\\'text-[11px] text-gray-400\\'>มีลายเซ็นในระบบ</span>';}">` : '<span class="text-xs text-gray-400">— ยังไม่ลงนาม —</span>'}
         </div>
       </div>
       <div class="mt-2 text-center border-t border-gray-100 pt-1">
