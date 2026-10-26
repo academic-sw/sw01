@@ -67,7 +67,7 @@ function openAdminEditRequest(reqId) {
       <div class="text-left text-xs space-y-3 max-h-[75vh] overflow-y-auto pr-1">
         <div class="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 flex items-center gap-2">
           <i class="fa-solid fa-triangle-exclamation text-amber-600 text-base"></i>
-          <span>แอดมินสามารถแก้ไขข้อมูลคำร้องและสถานะได้ เมื่อบันทึกระบบจะอัปเดตลง Google Sheets และปรับปรุงเอกสาร PDF อัตโนมัติ</span>
+          <span>แอดมินสามารถแก้ไขข้อมูลคำร้องและสถานะได้ เมื่อบันทึกระบบจะอัปเดตและปรับปรุงเอกสาร PDF อัตโนมัติ</span>
         </div>
 
         <div class="font-bold text-gray-800 border-b pb-1 text-sm"><i class="fa-solid fa-calendar mr-1 text-primary"></i> วันที่ยื่นคำร้อง & ภาคเรียน</div>
@@ -200,7 +200,7 @@ function openAdminEditRequest(reqId) {
     if (r.isConfirmed && r.value) {
       Swal.fire({
         title: 'กำลังบันทึกข้อมูล...',
-        html: 'กำลังอัปเดตลง Google Sheets และปรับปรุงเอกสาร PDF',
+        html: 'กำลังอัปเดตและปรับปรุงเอกสาร PDF',
         didOpen: () => Swal.showLoading(),
         allowOutsideClick: false
       });
@@ -228,7 +228,7 @@ async function adminDeleteRequest(reqId) {
 
   const confirmRes = await Swal.fire({
     title: 'ยืนยันลบคำร้อง?',
-    html: `คุณแน่ใจหรือไม่ว่าต้องการลบคำร้องของ <b>${esc(studentName)}</b>?<br><span class="text-xs text-red-500 font-medium">ข้อมูลจะถูกลบออกจาก Google Sheets ทั้งชีทหลักและชีทประจำชั้นอย่างถาวร</span>`,
+    html: `คุณแน่ใจหรือไม่ว่าต้องการลบคำร้องของ <b>${esc(studentName)}</b>?<br><span class="text-xs text-red-500 font-medium">ข้อมูลจะถูกลบออกทั้งชีทหลักและชีทประจำชั้นอย่างถาวร</span>`,
     icon: 'warning',
     showCancelButton: true,
     confirmButtonColor: '#ef4444',
@@ -241,7 +241,7 @@ async function adminDeleteRequest(reqId) {
 
   Swal.fire({
     title: 'กำลังลบคำร้อง...',
-    html: 'กำลังลบข้อมูลออกจาก Google Sheets',
+    html: 'กำลังลบข้อมูลออก',
     didOpen: () => Swal.showLoading(),
     allowOutsideClick: false
   });
@@ -256,7 +256,7 @@ async function adminDeleteRequest(reqId) {
     Swal.fire({
       icon: 'error',
       title: 'ลบคำร้องไม่สำเร็จ',
-      text: err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheets'
+      text: err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ'
     });
   }
 }
@@ -697,7 +697,7 @@ function renderTopBar() {
       <div class="text-[11px] text-gray-500 truncate hidden sm:block">${pageSubtitle(state.page)}</div>
     </div>
     <div class="flex items-center gap-2">
-      <button data-action="refresh" class="w-9 h-9 rounded-lg hover:bg-emerald-50 text-emerald-600 flex items-center justify-center" title="รีเฟรชข้อมูลจาก Google Sheet"><i class="fa-solid fa-arrows-rotate"></i></button>
+      <button data-action="refresh" class="w-9 h-9 rounded-lg hover:bg-emerald-50 text-emerald-600 flex items-center justify-center" title="รีเฟรชข้อมูล"><i class="fa-solid fa-arrows-rotate"></i></button>
       ${!state.user ? `<button data-action="open-login" class="hidden sm:flex btn-primary text-xs px-3 py-2 rounded-lg items-center gap-2"><i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</button>` :
       `<button data-action="logout" class="w-9 h-9 rounded-lg hover:bg-red-50 text-red-500 flex items-center justify-center" title="ออกจากระบบ"><i class="fa-solid fa-right-from-bracket"></i></button>`}
     </div>
@@ -814,7 +814,7 @@ function renderHome() {
         <div class="relative z-10 text-white">
           <div class="text-xs font-medium opacity-90 mb-1"><i class="fa-solid fa-calendar-check mr-1"></i> ภาคเรียนปัจจุบัน</div>
           <div class="text-2xl sm:text-3xl font-bold">ภาคเรียนที่ ${current?.term || '-'} / ปีการศึกษา ${current?.year || curBE}</div>
-          <div class="text-sm opacity-90 mt-1">ระบบคำร้องขอเข้าห้องสอบ (สว.01) — แดชบอร์ดและติดตามสถานะคำร้องแบบเรียลไทม์ เชื่อมโยง Google Sheets & Slides</div>
+          <div class="text-sm opacity-90 mt-1">ระบบคำร้องขอเข้าห้องสอบ (สว.01) — แดชบอร์ดและติดตามสถานะคำร้องแบบเรียลไทม์</div>
           <div class="mt-4 flex flex-wrap gap-2">
             <button data-action="nav" data-page="student" class="bg-white/20 hover:bg-white/30 backdrop-blur px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition"><i class="fa-solid fa-file-pen"></i> ยื่นคำร้องใหม่</button>
             <button data-action="nav" data-page="requests-list" class="bg-white text-emerald-800 hover:bg-white/90 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow-sm transition"><i class="fa-solid fa-clipboard-list"></i> ไปยังหน้ารายการคำร้อง</button>
@@ -939,7 +939,7 @@ function renderStudent() {
 
           <div class="flex gap-2 justify-end pt-2">
             <button type="button" data-action="reset-form" class="px-4 py-2 rounded-lg border border-gray-300 text-sm hover:bg-gray-50">ล้างฟอร์ม</button>
-            <button type="submit" class="btn-primary px-6 py-2.5 rounded-lg text-sm font-medium"><i class="fa-solid fa-paper-plane mr-1"></i> ส่งคำร้อง (บันทึก Google Sheet)</button>
+            <button type="submit" class="btn-primary px-6 py-2.5 rounded-lg text-sm font-medium"><i class="fa-solid fa-paper-plane mr-1"></i> ส่งคำร้อง</button>
           </div>
         </form>
       </div>
@@ -1965,7 +1965,7 @@ function openRequestDetail(reqId) {
 async function applyApproval(reqId, role, { approve, note, sig }) {
   Swal.fire({
     title: 'กำลังบันทึกการอนุมัติ...',
-    html: 'กำลังบันทึกลายเซ็นและอัปเดตขั้นตอนใน Google Sheet',
+    html: 'กำลังบันทึกลายเซ็นและอัปเดตขั้นตอน',
     didOpen: () => Swal.showLoading(),
     allowOutsideClick: false
   });
@@ -2095,7 +2095,7 @@ document.addEventListener('click', async e => {
   if (action === 'open-login') { openLoginModal(); return; }
   if (action === 'refresh') {
     state.loading = true; renderApp();
-    try { await DB.load(); toast('success', 'อัปเดตข้อมูลจาก Google Sheet แล้ว'); } catch (e) { toast('error', e.message); }
+    try { await DB.load(); toast('success', 'อัปเดตข้อมูลแล้ว'); } catch (e) { toast('error', e.message); }
     state.loading = false; renderApp(); return;
   }
   if (action === 'logout') {
@@ -2557,7 +2557,7 @@ document.addEventListener('submit', async e => {
 
   Swal.fire({
     title: 'กำลังบันทึกข้อมูล...',
-    html: 'กำลังบันทึกลง Google Sheet และอัปโหลดไฟล์ลายเซ็น',
+    html: 'กำลังบันทึกและอัปโหลดไฟล์ลายเซ็น',
     didOpen: () => Swal.showLoading(),
     allowOutsideClick: false
   });
