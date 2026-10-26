@@ -412,31 +412,92 @@ const THAI_MONTHS_FULL = [
 /**
  * แปลงวันที่สอบให้อยู่ในรูปแบบภาษาไทย เช่น 14 ธันวาคม 2569
  */
+const THAI_MONTHS_MAP = {
+  Jan: 'มกราคม', Feb: 'กุมภาพันธ์', Mar: 'มีนาคม', Apr: 'เมษายน', May: 'พฤษภาคม', Jun: 'มิถุนายน',
+  Jul: 'กรกฎาคม', Aug: 'สิงหาคม', Sep: 'กันยายน', Oct: 'ตุลาคม', Nov: 'พฤศจิกายน', Dec: 'ธันวาคม',
+  January: 'มกราคม', February: 'กุมภาพันธ์', March: 'มีนาคม', April: 'เมษายน', May: 'พฤษภาคม',
+  June: 'มิถุนายน', July: 'กรกฎาคม', August: 'สิงหาคม', September: 'กันยายน',
+  October: 'ตุลาคม', November: 'พฤศจิกายน', December: 'ธันวาคม'
+};
+
+/**
+ * แปลงวันที่สอบให้อยู่ในรูปแบบภาษาไทย เช่น 20 มีนาคม 2569
+ * รองรับทั้ง Date Object, ISO String, และข้อความแบบ Date.toString() ภาษาอังกฤษ
+ */
 function formatThaiExamDate(val) {
   if (!val) return '-';
-  const str = String(val).trim();
-  if (!str) return '-';
 
-  // รูปแบบ ISO หรือ YYYY-MM-DD เช่น 2569-12-14T17:00:00.000Z หรือ 2026-12-14
-  const match = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (match) {
-    let year = parseInt(match[1], 10);
-    const month = parseInt(match[2], 10);
-    const day = parseInt(match[3], 10);
+  // 1. กรณีเป็น Date Object โดยตรง
+  if (val instanceof Date || Object.prototype.toString.call(val) === '[object Date]') {
+    if (isNaN(val.getTime())) return '-';
+    const day = val.getDate();
+    const month = val.getMonth();
+    let year = val.getFullYear();
     if (year < 2400) year += 543;
-    const monthName = THAI_MONTHS_FULL[month - 1] || match[2];
-    return `${day} ${monthName} ${year}`;
+    return day + ' ' + THAI_MONTHS_FULL[month] + ' ' + year;
   }
 
-  // รูปแบบ DD/MM/YYYY
-  const matchSlash = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-  if (matchSlash) {
-    const day = parseInt(matchSlash[1], 10);
-    const month = parseInt(matchSlash[2], 10);
-    let year = parseInt(matchSlash[3], 10);
+  let str = String(val).trim();
+  if (!str) return '-';
+
+  // 2. ถ้ามีชื่อเดือนภาษาไทยและปี พ.ศ. อยู่แล้ว
+  for (let i = 0; i < THAI_MONTHS_FULL.length; i++) {
+    const m = THAI_MONTHS_FULL[i];
+    if (str.includes(m)) {
+      const mMatch = str.match(/(\d{1,2})\s+([^\d\s]+)\s+(\d{4})/);
+      if (mMatch) {
+        let yr = parseInt(mMatch[3], 10);
+        if (yr < 2400) yr += 543;
+        return parseInt(mMatch[1], 10) + ' ' + mMatch[2] + ' ' + yr;
+      }
+      return str;
+    }
+  }
+
+  // 3. รูปแบบ Date.toString() ภาษาอังกฤษ เช่น:
+  // "Mon Mar 20 2569 00:00:00 GMT+0700 (เวลาอินโดจีน)"
+  // หรือ "Mon Mar 20 2026 00:00:00 GMT+0700 (Indochina Time)"
+  const engDateMatch = str.match(/(?:[A-Za-z]{3}\s+)?([A-Za-z]{3,9})\s+(\d{1,2})\s+(\d{4})/);
+  if (engDateMatch) {
+    const monthNameEng = engDateMatch[1];
+    const day = parseInt(engDateMatch[2], 10);
+    let year = parseInt(engDateMatch[3], 10);
     if (year < 2400) year += 543;
-    const monthName = THAI_MONTHS_FULL[month - 1] || matchSlash[2];
-    return `${day} ${monthName} ${year}`;
+    const thaiMonth = THAI_MONTHS_MAP[monthNameEng] || THAI_MONTHS_MAP[monthNameEng.slice(0, 3)] || monthNameEng;
+    return day + ' ' + thaiMonth + ' ' + year;
+  }
+
+  // รูปแบบ "20 Mar 2569" หรือ "20 March 2026"
+  const engDateMatch2 = str.match(/(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})/);
+  if (engDateMatch2) {
+    const day = parseInt(engDateMatch2[1], 10);
+    const monthNameEng = engDateMatch2[2];
+    let year = parseInt(engDateMatch2[3], 10);
+    if (year < 2400) year += 543;
+    const thaiMonth = THAI_MONTHS_MAP[monthNameEng] || THAI_MONTHS_MAP[monthNameEng.slice(0, 3)] || monthNameEng;
+    return day + ' ' + thaiMonth + ' ' + year;
+  }
+
+  // 4. รูปแบบ ISO หรือ YYYY-MM-DD เช่น "2569-03-20T17:00:00.000Z" หรือ "2026-03-20"
+  const isoMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    let year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (year < 2400) year += 543;
+    const monthName = THAI_MONTHS_FULL[month - 1] || isoMatch[2];
+    return day + ' ' + monthName + ' ' + year;
+  }
+
+  // 5. รูปแบบ DD/MM/YYYY หรือ DD-MM-YYYY เช่น "20/03/2569" หรือ "20-03-2026"
+  const slashMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (slashMatch) {
+    const day = parseInt(slashMatch[1], 10);
+    const month = parseInt(slashMatch[2], 10);
+    let year = parseInt(slashMatch[3], 10);
+    if (year < 2400) year += 543;
+    const monthName = THAI_MONTHS_FULL[month - 1] || slashMatch[2];
+    return day + ' ' + monthName + ' ' + year;
   }
 
   return str;
@@ -1372,7 +1433,7 @@ function openSignatureModal(target) {
     didOpen: () => {
       const canvas = document.getElementById('sigCanvas');
       const ctx = canvas.getContext('2d');
-      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1f2937';
+      ctx.lineWidth = 1.25; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1f2937';
       let drawing = false, lastX = 0, lastY = 0;
       const pos = e => {
         const r = canvas.getBoundingClientRect();
@@ -1432,7 +1493,7 @@ function openSignatureModal(target) {
       window._lastSig = r.value;
       if (sigTarget === 'student') {
         document.getElementById('studentSignature').value = r.value;
-        document.getElementById('studentSigPreview').innerHTML = `<img src="${r.value}" style="max-height:48px;max-width:100%;object-fit:contain">`;
+        document.getElementById('studentSigPreview').innerHTML = `<img src="${r.value}" style="max-height:26px;max-width:100%;object-fit:contain">`;
       } else if (sigTarget === 'approver') {
         window._sigTemp = r.value;
         const preview = document.getElementById('signPreview');
@@ -1449,9 +1510,9 @@ function openSignatureModal(target) {
 // ============================================================
 // SIGNATURE: Normalize ให้ขนาดคงที่ + ตำแหน่งเดิมทุกครั้ง
 // ============================================================
-const SIG_NORM_W = 160;   // ความกว้างมาตรฐาน (px)
-const SIG_NORM_H = 50;   // ความสูงมาตรฐาน (px)
-const SIG_NORM_PAD = 4;   // ระยะขอบภายใน (px)
+const SIG_NORM_W = 480;   // ความกว้างมาตรฐานความละเอียดสูง คมชัด (px)
+const SIG_NORM_H = 150;  // ความสูงมาตรฐานความละเอียดสูง คมชัด (px)
+const SIG_NORM_PAD = 8;   // ระยะขอบภายใน (px)
 
 /**
  * cropSignatureCanvas(c, targetW, targetH)
@@ -1524,21 +1585,40 @@ function cropSignatureCanvas(c, targetW = SIG_NORM_W, targetH = SIG_NORM_H) {
 }
 
 function removeWhiteBackground(img) {
+  // รักษารายละเอียดความคมชัดของภาพต้นฉบับ (สูงสุด 960px)
+  const maxW = 960;
+  let targetW = img.naturalWidth || img.width || 480;
+  let targetH = img.naturalHeight || img.height || 150;
+  if (targetW > maxW) {
+    targetH = Math.round((targetH * maxW) / targetW);
+    targetW = maxW;
+  }
+
   const c = document.createElement('canvas');
-  c.width = img.width; c.height = img.height;
+  c.width = targetW;
+  c.height = targetH;
   const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const imgData = ctx.getImageData(0, 0, c.width, c.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+
+  const imgData = ctx.getImageData(0, 0, targetW, targetH);
   const data = imgData.data;
+
+  // ตัดพื้นหลังขาวอย่างละเอียด นุ่มนวล ไม่ทำให้เส้นลายเซ็นแตกหรือเป็นรอยหยัก
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i], g = data[i + 1], b = data[i + 2];
-    if (r > 235 && g > 235 && b > 235) {
-      data[i + 3] = 0; // ทำพื้นหลังขาวโปร่งใส
+    const lum = (r * 299 + g * 587 + b * 114) / 1000;
+    if (lum > 225) {
+      data[i + 3] = 0; // พื้นหลังขาวโปร่งใส
+    } else if (lum > 185) {
+      // ทำขอบเส้นให้นุ่มนวล ไม่ขาดตอน
+      data[i + 3] = Math.round(data[i + 3] * ((225 - lum) / 40));
     }
   }
   ctx.putImageData(imgData, 0, 0);
-  // ใช้ crop + normalize ขนาดคงที่ (ถ้าไม่มีเนื้อหาให้คืนภาพเดิม)
-  return cropSignatureCanvas(c) || c.toDataURL('image/png');
+  // ครอปและขยายเป็นภาพความละเอียดสูง 480x150 ให้คมชัด
+  return cropSignatureCanvas(c, 480, 150) || c.toDataURL('image/png');
 }
 
 // ============================================================
@@ -1598,8 +1678,8 @@ function openRequestDetail(reqId) {
           <span>${label}</span>
           ${approval ? `<span class="text-[11px] font-bold ${approval === 'approve' ? 'text-emerald-600' : 'text-red-600'}">${approval === 'approve' ? '✓ เห็นควร' : '✗ ไม่เห็นควร'}</span>` : ''}
         </div>
-        <div class="h-10 flex items-center justify-center bg-white rounded-lg border border-dashed border-gray-200 p-1">
-          ${imgUrl ? `<img src="${imgUrl}" alt="ลายเซ็น${label}" class="max-h-8 max-w-[120px] object-contain" onerror="if(this.dataset.fb!='1'){this.dataset.fb='1';this.src='https://drive.google.com/thumbnail?id=${fileId}&sz=w500';}else{this.parentElement.innerHTML='<span class=\\'text-[11px] text-gray-400\\'>มีลายเซ็นในระบบ</span>';}">` : '<span class="text-xs text-gray-400">— ยังไม่ลงนาม —</span>'}
+        <div class="h-8 flex items-center justify-center bg-white rounded-lg border border-dashed border-gray-200 p-1">
+          ${imgUrl ? `<img src="${imgUrl}" alt="ลายเซ็น${label}" class="max-h-5 max-w-[70px] object-contain" onerror="if(this.dataset.fb!='1'){this.dataset.fb='1';this.src='https://drive.google.com/thumbnail?id=${fileId}&sz=w500';}else{this.parentElement.innerHTML='<span class=\\'text-[11px] text-gray-400\\'>มีลายเซ็นในระบบ</span>';}">` : '<span class="text-xs text-gray-400">— ยังไม่ลงนาม —</span>'}
         </div>
       </div>
       <div class="mt-2 text-center border-t border-gray-100 pt-1">
@@ -1740,7 +1820,7 @@ function openRequestDetail(reqId) {
       const canvas = document.getElementById('apprSigCanvas');
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 1.25;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.strokeStyle = '#1e293b';
